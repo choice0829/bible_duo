@@ -198,8 +198,52 @@
     return 'rgba(' + (n >> 16) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + al + ')';
   };
 
+  // 색연필 칠: 작은 캔버스에 쓱쓱 칠한 빗금과 종이결(군데군데 비치는 점)을 한 번만 그려 이미지로 만들고, 가로로 이어 붙여 깐다.
+  // 무거운 SVG 필터를 쓰지 않아 아이폰에서도 가볍다. 캔버스를 못 쓰는 환경이면 null을 돌려주고 가는 빗금 그라데이션으로 대신한다.
+  const tileCache = {};
+  function pencilTile(col, v) {
+    const key = col.f + v;
+    if (key in tileCache) return tileCache[key];
+    let url = null;
+    try {
+      const W = 192, H = 48, rad = Math.PI / 180;
+      const cv = document.createElement('canvas');
+      cv.width = W; cv.height = H;
+      const g = cv.getContext('2d');
+      const r = rng(seedOf('tile' + key));
+      g.lineCap = 'butt';
+      // 한 번 긋기: 시작과 끝은 힘을 빼 옅게, 가운데는 진하게. 가로로 이어 붙여도 끊기지 않게 양옆에도 한 번씩 더 그린다.
+      const hatch = (color, lw, alpha, ang, y0, y1, x) => {
+        const sn = Math.sin(ang * rad), len = (y1 - y0) / sn, dx = Math.cos(ang * rad) * len;
+        [-W, 0, W].forEach((ox) => {
+          const px = (t) => x + ox + dx * t, py = (t) => y0 + (y1 - y0) * t;
+          [[0, .3, .4, .8], [.3, .72, 1, 1], [.72, 1, .55, .75]].forEach(([a, b, al, wk]) => {
+            g.strokeStyle = color; g.globalAlpha = alpha * al; g.lineWidth = lw * wk;
+            g.beginPath(); g.moveTo(px(a), py(a)); g.lineTo(px(b), py(b)); g.stroke();
+          });
+        });
+      };
+      for (let i = 0; i < 40; i++) {   // 주된 빗금: 가파른 사선. 끝나는 높이가 제각각이라 위아래 가장자리가 거칠다
+        hatch(col.f, 2.4 + r() * 1.2, .72 + r() * .26, 68 + v * 4 + (r() - .5) * 12, H * (.02 + .22 * r()), H * (.7 + .28 * r()), r() * W);
+      }
+      for (let i = 0; i < 14; i++) {   // 반대 방향으로 살짝 덧칠: 진한 색, 옅게
+        hatch(col.s, 2 + r() * .8, .3 + r() * .22, 108 - v * 3 + (r() - .5) * 10, H * (.18 + .2 * r()), H * (.65 + .3 * r()), r() * W);
+      }
+      g.globalAlpha = 1;
+      g.globalCompositeOperation = 'destination-out';   // 종이결: 군데군데 색이 비어 종이가 비친다
+      for (let i = 0; i < 520; i++) {
+        g.fillStyle = 'rgba(0,0,0,' + (.5 + r() * .5).toFixed(2) + ')';
+        const s = 1.2 + r() * 2.2;
+        g.fillRect(r() * W, r() * H, s, s * (.6 + r() * .8));
+      }
+      url = cv.toDataURL('image/png');
+    } catch (e) { url = null; }
+    tileCache[key] = url;
+    return url;
+  }
+
   // 표시 하나에 쓸 클래스 이름. 처음 쓰일 때 CSS를 만든다.
-  // 색연필 질감은 무거운 SVG 필터 대신 가는 빗금(그라데이션)과 끊어 그은 선으로 표현한다. (아이폰에서 가볍게 돌아가도록)
+  // 색연필: 칠은 위의 빗금 이미지로, 선(동그라미·네모·밑줄·물결)은 끊어졌다 이어지는 거친 선을 세 번 겹쳐 그어 표현한다.
   function ruleFor(a) {
     const v = seedOf(a.id) % 3;
     const cls = 'an-' + a.kind + '-' + a.pen + '-' + a.c + '-' + v;
@@ -207,15 +251,35 @@
     ruleDone.add(cls);
     const col = COLORS[a.c] || COLORS[0];
     const r = rng(seedOf(cls));
-    const j = (m) => (r() - 0.5) * m;
     const pencil = a.pen === 'pencil';
-    const sattr = (w, op, dash) => 'fill="none" stroke="' + col.s + '" stroke-width="' + w.toFixed(1) +
-      '" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" opacity="' + op + '"' +
+    const j = (m) => (r() - 0.5) * m * (pencil ? 1.7 : 1);   // 색연필은 손떨림을 더 크게
+    const sattr = (w, op, dash, color, cap) => 'fill="none" stroke="' + (color || col.s) + '" stroke-width="' + w.toFixed(1) +
+      '" stroke-linecap="' + (cap || 'round') + '" stroke-linejoin="round" vector-effect="non-scaling-stroke" opacity="' + op + '"' +
       (dash ? ' stroke-dasharray="' + dash + '"' : '');
-    // 선 모양 만들기: 색연필은 살짝 다르게 두 번 긋고 군데군데 끊는다
+    // 끊김이 불규칙한 점선. 서로 다른 모양을 겹쳐 그으면 군데군데 종이가 비쳐 보이는 거친 선이 된다
+    const grain = (gapMin, gapMax) => {
+      const d = [];
+      for (let i = 0; i < 18; i++) d.push(i % 2 ? (gapMin + r() * (gapMax - gapMin)).toFixed(1) : (4 + r() * 10).toFixed(1));
+      return d.join(' ');
+    };
+    // 선 모양 만들기: 싸인펜은 매끈한 한 줄, 색연필은 가늘고 거친 선을 조금씩 어긋나게 세 번 긋는다
     const strokes = (gen, w) => pencil
-      ? '<path d="' + gen() + '" ' + sattr(w * 0.72, 0.78, '34 2 18 3 46 2') + '/><path d="' + gen() + '" ' + sattr(w * 0.6, 0.62, '20 3 40 2 24 3') + '/>'
+      ? [[0.7, .88, col.s, .3, .8], [0.52, .72, col.s, .4, 1.1], [0.44, .62, col.f, .6, 1.5]].map(([k, op, c, g0, g1]) =>
+        '<path d="' + gen() + '" ' + sattr(w * k, op, grain(g0, g1), c, 'butt') + '/>').join('')
       : '<path d="' + gen() + '" ' + sattr(w, 0.9) + '/>';
+    // 색연필 선이 곧게 나오지 않도록 각 변을 잘게 나누어 조금씩 흔든다
+    const rough = (pts) => {
+      if (!pencil) return pts;
+      const out = [pts[0]];
+      for (let i = 1; i < pts.length; i++) {
+        const p0 = pts[i - 1], p1 = pts[i], n = Math.max(2, Math.ceil(Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) / 9));
+        for (let k = 1; k <= n; k++) {
+          const t = k / n;
+          out.push([p0[0] + (p1[0] - p0[0]) * t + (k < n ? j(0.7) : 0), p0[1] + (p1[1] - p0[1]) * t + (k < n ? j(0.9) : 0)]);
+        }
+      }
+      return out;
+    };
     const NR = 'background-repeat:no-repeat;';
     let css = '';
     if (a.kind === 'fill') {
@@ -223,7 +287,13 @@
       for (let x = 2; x <= 98; x += 12) { top.push([x + j(1.6), 6 + j(2.8)]); bot.push([x + j(1.6), 35 + j(2.8)]); }
       bot.reverse();
       const d = poly(top.concat(bot), true);
-      if (pencil) {
+      const tile = pencil ? pencilTile(col, v) : null;
+      if (tile) {
+        // 아주 옅은 바탕색 위에 빗금 이미지를 가로로 이어 깐다
+        const wash = svgBG('<path d="' + d + '" fill="' + col.f + '" fill-opacity=".13"/>', '0 0 100 40');
+        css = 'padding:.04em 0 .12em;background-repeat:repeat-x,no-repeat;background-size:auto 82%,100% 100%;background-position:0 70%,0 0;' +
+          'background-image:url("' + tile + '"),' + wash;
+      } else if (pencil) {   // 캔버스를 못 쓸 때: 가는 빗금 그라데이션
         const base = svgBG('<path d="' + d + '" fill="' + col.f + '" fill-opacity=".3"/>', '0 0 100 40');
         const h1 = 'repeating-linear-gradient(' + (112 + v * 8) + 'deg,' + rgba(col.s, 0.5) + ' 0 1px,transparent 1px ' + (2.7 + v * 0.4) + 'px)';
         const h2 = 'repeating-linear-gradient(' + (68 - v * 6) + 'deg,' + rgba(col.f, 0.75) + ' 0 1.2px,transparent 1.2px ' + (3.5 + v * 0.3) + 'px)';
@@ -243,10 +313,10 @@
       };
       css = 'padding:.12em .3em .22em;margin:0 -.3em;' + NR + 'background-size:100% 100%;background-image:' + svgBG(strokes(gen, 2.1), '0 0 100 40');
     } else if (a.kind === 'rect') {
-      const gen = () => poly([[6 + j(2), 7 + j(2)], [94 + j(2), 5 + j(2)], [95 + j(2), 35 + j(2)], [5 + j(2), 36 + j(2)], [7 + j(2), 4 + j(2)], [15, 5 + j(1)]]);
+      const gen = () => poly(rough([[6 + j(2), 7 + j(2)], [94 + j(2), 5 + j(2)], [95 + j(2), 35 + j(2)], [5 + j(2), 36 + j(2)], [7 + j(2), 4 + j(2)], [15, 5 + j(1)]]));
       css = 'padding:.1em .2em .2em;margin:0 -.2em;' + NR + 'background-size:100% 100%;background-image:' + svgBG(strokes(gen, 2.1), '0 0 100 40');
     } else if (a.kind === 'under') {
-      const gen = () => { const pts = []; for (let x = 1; x <= 99; x += 14) pts.push([x + j(2), 4 + j(1.8)]); return poly(pts); };
+      const gen = () => { const pts = []; for (let x = 1; x <= 99; x += 14) pts.push([x + j(2), 4 + j(1.8)]); return poly(rough(pts)); };
       css = 'padding:0 0 .28em;' + NR + 'background-size:100% .34em;background-position:0 100%;background-image:' + svgBG(strokes(gen, 2.2), '0 0 100 8');
     } else if (a.kind === 'wave') {
       const gen = () => {
