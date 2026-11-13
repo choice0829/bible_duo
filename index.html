@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="책장성경">
+  <meta name="theme-color" content="#FBF8F1">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+  <title>책장성경</title>
+</head>
+<body class="theme-paper">
+  <div id="stage"></div>
+  <div id="measure" class="typo" aria-hidden="true"></div>
+
+  <header id="topbar">
+    <div class="head-row">
+    <button id="btn-pick" class="title-btn" type="button" aria-label="책과 장 고르기">
+      <b id="loc-book">책장성경</b><span id="loc-ch"></span>
+    </button>
+    <div class="menu-row">
+      <button id="btn-search" class="mini-btn icon-btn" type="button" aria-label="검색" title="검색">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.8"/><path d="M15.6 15.6L21 21"/></svg>
+      </button>
+      <button id="btn-settings" class="mini-btn icon-btn" type="button" aria-label="설정" title="설정">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.2 4.51L10.49 1.91L13.51 1.91L13.8 4.51A7.7 7.7 0 0 1 16.02 5.43L18.07 3.8L20.2 5.93L18.57 7.98A7.7 7.7 0 0 1 19.49 10.2L22.09 10.49L22.09 13.51L19.49 13.8A7.7 7.7 0 0 1 18.57 16.02L20.2 18.07L18.07 20.2L16.02 18.57A7.7 7.7 0 0 1 13.8 19.49L13.51 22.09L10.49 22.09L10.2 19.49A7.7 7.7 0 0 1 7.98 18.57L5.93 20.2L3.8 18.07L5.43 16.02A7.7 7.7 0 0 1 4.51 13.8L1.91 13.51L1.91 10.49L4.51 10.2A7.7 7.7 0 0 1 5.43 7.98L3.8 5.93L5.93 3.8L7.98 5.43A7.7 7.7 0 0 1 10.2 4.51ZM12 8.7a3.3 3.3 0 1 0 0 6.6a3.3 3.3 0 1 0 0-6.6Z"/></svg>
+      </button>
+      <button id="btn-hl" class="mini-btn icon-btn" type="button" aria-label="하이라이트·표시 모아 보기" title="하이라이트">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 3.5h11a1 1 0 0 1 1 1V21l-6.5-4.6L5.5 21V4.5a1 1 0 0 1 1-1z"/></svg>
+      </button>
+    </div>
+    </div>
+  </header>
+
+  <div id="ann-bar" hidden>
+    <div class="ab-top"><span id="ab-ref"></span><button id="ab-close" type="button">닫기</button></div>
+    <div id="ab-kinds" class="ab-kinds"></div>
+    <div class="ab-opts"><div id="ab-pens" class="ab-pens"></div><div id="ab-colors" class="ab-colors"></div></div>
+    <div class="ab-adj">
+      <span class="lbl">시작</span><button id="ab-s-prev" type="button" aria-label="시작을 앞 낱말로">◂</button><button id="ab-s-next" type="button" aria-label="시작을 뒤 낱말로">▸</button>
+      <span class="lbl">끝</span><button id="ab-e-prev" type="button" aria-label="끝을 앞 낱말로">◂</button><button id="ab-e-next" type="button" aria-label="끝을 뒤 낱말로">▸</button>
+      <button id="ab-all" type="button" class="txt">절 전체</button>
+      <button id="ab-erase" type="button" class="txt warn">지우기</button>
+    </div>
+  </div>
+
+  <div id="sheet" hidden>
+    <div class="panel" role="dialog" aria-modal="true">
+      <div class="panel-head">
+        <button id="sheet-back" class="link-btn" type="button" hidden>‹ 뒤로</button>
+        <strong id="sheet-title"></strong>
+        <button id="sheet-close" class="link-btn" type="button">닫기</button>
+      </div>
+      <div id="sheet-body"></div>
+    </div>
+  </div>
+
+  <div id="hint" hidden>
+    <span>설치: 아래 <b>공유 버튼 ⎙</b> → <b>홈 화면에 추가</b></span>
+    <button id="hint-close" type="button">확인</button>
+  </div>
+
+  <div id="loading">불러오는 중…</div>
+
+  <script src="lib/page-flip.browser.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
