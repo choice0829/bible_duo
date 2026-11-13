@@ -58,9 +58,11 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 #stage .stf__parent { width: 100%; }
 
 .page { background: var(--bg); overflow: hidden; overflow: clip; }   /* clip: 코드로도 스크롤되지 않는다 */
+/* 본문 상자: 좌우 여백(padx)을 padding으로 둔다. 글이 놓이는 폭은 예전과 같고(쪽 나누기 그대로),
+   바깥쪽 여백 안에 설교노트 표시(.nt::before)를 그릴 수 있다. */
 .page .txt {
   position: absolute; overflow: hidden; overflow: clip;
-  left: var(--padx); right: var(--padx); top: var(--padtop); bottom: var(--padbottom);
+  left: 0; right: 0; padding: 0 var(--padx); top: var(--padtop); bottom: var(--padbottom);
 }
 
 /* 본문 글꼴 — 쪽 나누기(#measure)와 실제 쪽(.txt)이 똑같아야 한다 */
@@ -148,12 +150,16 @@ body.is-spread .head-row { flex-direction: row; align-items: center; gap: 18px; 
 }
 #sheet.tall .panel { height: min(84%, 640px); }
 .panel-head {
-  display: grid; grid-template-columns: 64px 1fr 64px; align-items: center; text-align: center;
-  padding: 14px 12px; border-bottom: 1px solid var(--line);
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; text-align: center;
+  padding: 14px 12px; border-bottom: 1px solid var(--line); min-height: 53px;
 }
 .link-btn { color: var(--accent); font-size: 15px; }
-.panel-head .link-btn:first-child { text-align: left; }
-.panel-head .link-btn:last-child { text-align: right; }
+.panel-head > .link-btn:first-child { text-align: left; justify-self: start; }
+.head-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.head-actions .link-btn { text-align: right; }
+.act-btn { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 30px; margin: -4px 0; color: var(--accent); }
+.act-btn[hidden] { display: none; }
+.act-btn svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
 #sheet-body { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 14px 16px 22px; touch-action: pan-y; }
 .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
 .tab { flex: 1; padding: 9px 0; border-radius: 10px; background: var(--chip); font-weight: 600; }
@@ -249,3 +255,87 @@ body.is-spread .head-row { flex-direction: row; align-items: center; gap: 18px; 
 .chnav { display: flex; gap: 10px; margin-top: 26px; }
 .chnav button { flex: 1; padding: 13px 8px; border-radius: 12px; background: var(--chip); font-size: 15px; font-weight: 600; color: var(--fg); }
 .chnav button:disabled { opacity: 0; pointer-events: none; }
+
+/* ---------- 설교노트 ---------- */
+/* 본문 옆 여백 표시: 설교노트를 쓴 본문 구절의 바깥쪽 여백에 노트 색 띠를 그린다.
+   왼쪽 쪽(.pl)·한 쪽 화면은 왼쪽, 오른쪽 쪽(.pr)은 오른쪽. 띠는 글자 자리를 차지하지 않아 쪽 나누기에 영향이 없다. */
+.typo p.nt { position: relative; }
+/* 띠는 실제 쪽(.page)·장 칸(.chap)에서만 그린다. 쪽 나누기용 숨은 상자(#measure)에는 그리지 않아, 노트가 쪽 나누기에 영향을 주지 않는다. */
+.page p.nt::before, .chap p.nt::before {
+  content: ''; position: absolute; top: 0; bottom: -.22em; left: calc(-1 * var(--padx)); width: var(--padx);
+  background: linear-gradient(to right, transparent 0 1px, var(--n1, transparent) 1px 4px, var(--n2, transparent) 4px 7px, transparent 7px);
+  pointer-events: none;
+}
+.page.pr p.nt::before {
+  left: auto; right: calc(-1 * var(--padx));
+  background: linear-gradient(to left, transparent 0 1px, var(--n1, transparent) 1px 4px, var(--n2, transparent) 4px 7px, transparent 7px);
+}
+/* 펼친 화면의 왼쪽 바깥 여백(무대 밖)에 놓는 노트 표: 누르면 그 노트가 열린다 */
+#note-tabs { position: fixed; left: 0; top: 0; width: 0; height: 0; z-index: 9; transition: opacity .15s; }
+#note-tabs.moving { opacity: 0; pointer-events: none; }
+.nt-tab {
+  position: absolute; display: flex; align-items: center; justify-content: center;
+  border-radius: 9px; background: var(--n1); color: #fff; touch-action: manipulation;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .25);
+}
+.nt-tab svg { width: 60%; height: 60%; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+/* 접힌 화면: 장 제목 밑에 그 장의 설교노트 칩 */
+.nt-chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: -.2em 0 .7em; }
+.nt-chips:empty { display: none; }
+.nt-chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 6px 12px 6px 9px; border-radius: 999px;
+  background: var(--chip); border: 1px solid var(--n1); color: var(--fg); font-family: var(--sans); font-size: 13.5px; font-weight: 600; touch-action: manipulation;
+}
+.nt-chip i { flex: none; width: 10px; height: 10px; border-radius: 3px; background: var(--n1); }
+.nt-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 노트 목록 · 보기 · 쓰기 */
+.nt-row { display: block; width: 100%; text-align: left; padding: 12px 13px 12px 15px; margin-bottom: 8px; border-radius: 12px; background: var(--chip); position: relative; }
+.nt-row::before { content: ''; position: absolute; left: 0; top: 9px; bottom: 9px; width: 4px; border-radius: 0 3px 3px 0; background: var(--n1); }
+.nt-row b { display: block; font-size: 16.5px; line-height: 1.4; margin-bottom: 2px; overflow-wrap: anywhere; }
+.nt-row .nt-meta { display: block; font-size: 13px; color: var(--muted); }
+.nt-row .nt-meta em { font-style: normal; font-weight: 700; color: var(--accent); }
+.nt-row .nt-snip { display: block; margin-top: 4px; font-size: 14px; line-height: 1.5; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nt-draft { display: flex; align-items: center; gap: 8px; padding: 10px 12px; margin-bottom: 12px; border-radius: 12px; border: 1px dashed var(--accent); font-size: 14px; }
+.nt-draft span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nt-draft button { color: var(--accent); font-weight: 700; padding: 4px 6px; white-space: nowrap; }
+.nt-draft button.warn { color: #c0392b; }
+
+.nt-lab { margin: 16px 0 6px; font-size: 13px; font-weight: 700; color: var(--accent); }
+.nt-lab:first-child { margin-top: 2px; }
+.nt-lab small { font-weight: 400; color: var(--muted); }
+.nt-in, .nt-text, .nt-sel {
+  font: inherit; font-size: 16px; color: var(--fg); border: 1px solid var(--line); background: var(--chip); border-radius: 11px; outline: none;
+  -webkit-appearance: none; appearance: none; -webkit-user-select: text; user-select: text;
+}
+.nt-in { width: 100%; padding: 11px 13px; }
+.nt-in.quick { margin-top: 8px; font-size: 15px; padding: 9px 12px; }
+.nt-text { display: block; width: 100%; min-height: 190px; padding: 11px 13px; line-height: 1.65; resize: none; font-family: var(--serif); font-size: 16.5px; }
+.nt-in:focus, .nt-text:focus, .nt-sel:focus { border-color: var(--accent); }
+.nt-sel {
+  min-width: 0; padding: 9px 26px 9px 11px; -webkit-user-select: none; user-select: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center;
+}
+.nt-sel-row { display: flex; align-items: center; gap: 7px; margin-top: 8px; font-size: 14px; }
+.nt-sel-row .nt-k { flex: none; width: 34px; color: var(--muted); font-size: 13px; }
+.nt-sel-row .nt-sel { flex: 1; }
+.nt-sel-row .nt-sel.wide { flex: 2; }
+.nt-sel-row .u { flex: none; color: var(--muted); font-size: 13px; }
+.nt-ref { margin-top: 10px; padding: 9px 12px; border-radius: 10px; background: var(--chip); font-weight: 700; font-size: 15px; text-align: center; }
+.nt-ref.bad { color: #c0392b; }
+.nt-actions { display: flex; gap: 8px; margin-top: 20px; }
+.nt-btn { flex: 1; padding: 13px 10px; border-radius: 12px; background: var(--chip); font-size: 15.5px; font-weight: 700; text-align: center; }
+.nt-btn.primary { background: var(--accent); color: #fff; }
+.nt-btn.warn { color: #c0392b; }
+.nt-btn.armed { background: #c0392b; color: #fff; }
+.nv-title { font-size: 21px; font-weight: 800; line-height: 1.35; overflow-wrap: anywhere; }
+.nv-meta { margin-top: 5px; font-size: 14px; color: var(--muted); }
+.nv-meta b { color: var(--accent); }
+.nv-pass { margin-top: 12px; border-radius: 10px; background: var(--chip); }
+.nv-pass summary { padding: 10px 12px; font-size: 14px; font-weight: 700; cursor: pointer; }
+.nv-pass .nv-verses { padding: 2px 14px 12px; font-family: var(--serif); font-size: 15.5px; line-height: 1.75; max-height: 260px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.nv-pass .nv-verses sup { font-family: var(--sans); font-size: .62em; color: var(--accent); margin-right: 3px; }
+.nv-body { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); font-family: var(--serif); font-size: 16.5px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; -webkit-user-select: text; user-select: text; }
+.nv-body.empty { color: var(--muted); font-size: 14px; }
+.nt-in[type="date"] { display: block; min-height: 46px; text-align: left; }

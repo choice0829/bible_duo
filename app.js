@@ -58,6 +58,10 @@
   // 표시(하이라이트·동그라미 등): { 'gen.6.8': [ { id, s, e, kind, pen, c } ] }  (s~e = 그 절 본문의 글자 위치)
   let anns = store.get('bf.ann', {});
   let tool = store.get('bf.tool', { pen: 'marker', c: 0 });   // 마지막으로 고른 펜 종류와 색
+  // 설교노트: { items: [ { id, title, body, date:'YYYY-MM-DD', bk:'jhn', c1, v1, c2, v2 (장은 1부터), ts } ] }
+  let notesDB = store.get('bf.notes', { items: [] });
+  if (!Array.isArray(notesDB.items)) notesDB = { items: [] };
+  const NOTE_COLORS = ['#C2553B', '#2F7FB5', '#3E9468', '#B58A2B', '#7C5BB0', '#CC5C8E'];
   let sel = null;       // 지금 고른 낱말들 { items: [{ bookId, k, s, e }], act: 마지막으로 만진 범위 번호 }
   let selecting = false; // 길게 누른 채 끌어서 범위를 넓히는 중
   let bible = null;     // { version, books: [{id, name, chapters: [[{n,t}]]}] }
@@ -430,7 +434,7 @@
     const close = () => {
       if (!cur) return;
       const o = Math.max(cur.off, 0);
-      out += '<p data-k="' + cur.k + '" data-o="' + o + '" data-e="' + (o + cur.raw.length) + '"' + (cur.head ? ' data-h="1"' : '') + '>' +
+      out += '<p data-k="' + cur.k + '" data-o="' + o + '" data-e="' + (o + cur.raw.length) + '"' + (cur.head ? ' data-h="1"' : '') + noteAttrs(u.bookId, cur.k) + '>' +
         cur.head + annotate(u.bookId, cur.k, o, cur.raw) + '</p>';
       cur = null;
     };
@@ -586,7 +590,7 @@
     const first = pg.starts[i];
     const end = i + 1 < pg.starts.length ? pg.starts[i + 1] : pg.T.length;
     const el = document.createElement('div');
-    el.className = 'page';
+    el.className = 'page' + (pg.g.spread ? (i % 2 === 0 ? ' pl' : ' pr') : ' pl');   // 펼침: 짝수 쪽 = 왼쪽, 홀수 쪽 = 오른쪽
     el.innerHTML =
       '<div class="txt typo">' + sliceHTML(pg, first, end) + '</div>';
     return el;
@@ -596,10 +600,10 @@
   let scrollTimer = null;
   function chapterHTML(book, c) {
     const unit = book.id === 'psa' ? '편' : '장';
-    let h = '<h2 class="ch">' + (c + 1) + unit + '</h2>';
+    let h = '<h2 class="ch">' + (c + 1) + unit + '</h2><div class="nt-chips">' + noteChipsHTML(book.id, c) + '</div>';
     book.chapters[c].forEach((v) => {
       const k = c * 1000 + v.n;
-      h += '<p data-k="' + k + '" data-o="0" data-e="' + v.t.length + '" data-h="1"><sup class="vn">' + v.n + '</sup>' + annotate(book.id, k, 0, v.t) + '</p>';
+      h += '<p data-k="' + k + '" data-o="0" data-e="' + v.t.length + '" data-h="1"' + noteAttrs(book.id, k) + '><sup class="vn">' + v.n + '</sup>' + annotate(book.id, k, 0, v.t) + '</p>';
     });
     const bi = bible.books.indexOf(book);
     const prev = c > 0 ? '‹ ' + c + unit : (bi > 0 ? '‹ ' + bible.books[bi - 1].name : '');
@@ -652,7 +656,10 @@
     root.addEventListener('click', (e) => {
       const b = e.target.closest && e.target.closest('.chnav button');
       if (b && !b.disabled) goChapter(+b.dataset.go);
+      const chip = e.target.closest && e.target.closest('.nt-chip');
+      if (chip) { showNoteView(chip.dataset.note); openSheet(true); }
     });
+    refreshTabs();   // 접힌 화면에서는 표를 비운다
     // 읽던 위치 저장: 가로로 넘어가 멈췄을 때 장, 세로로 멈췄을 때 맨 위에 보이는 절
     root.addEventListener('scroll', () => {
       clearTimeout(scrollTimer);
@@ -710,7 +717,10 @@
     });
     flip.loadFromHTML(pages);
     flip.on('flip', (e) => { clearSelection(); onPage(e.data, true); });
+    // 책장이 넘어가는 동안에는 여백의 노트 표를 숨기고, 멈추면(read) 현재 쪽에 맞춰 다시 놓는다
+    flip.on('changeState', (e) => { if (e.data === 'read') { clearTimeout(tabsTimer); tabsTimer = setTimeout(() => refreshTabs(0), 120); } else hideTabs(); });
     onPage(start, false);
+    setTimeout(() => refreshTabs(0), 60);
   }
 
   // user=true: 사용자가 책장을 넘긴 경우에만 읽던 위치(pos)를 갱신한다.
@@ -745,6 +755,7 @@
       store.set('bf.pos', pos);
       flip.turnToPage(pg.g.spread ? page - (page % 2) : page);
       onPage(flip.getCurrentPageIndex(), false);
+      setTimeout(() => refreshTabs(0), 80);   // 바로 넘어간 쪽에 맞춰 여백의 노트 표를 다시 놓는다
       highlightVerse(p);
     } else {
       pos = p;
@@ -1045,6 +1056,7 @@
     clearTimeout(pressTimer);
     pressTimer = setTimeout(() => {
       if (!down || drag) return;
+      if (e.target.closest && e.target.closest('.nt-chip')) { down = null; return; }
       const d = down;
       down = null;
       guard(() => beginSelect(d.x, d.y));
@@ -1079,6 +1091,7 @@
     down = null; drag = null;
     if (scroller) {
       if (!d || cancelled || performance.now() - d.t > 450 || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 10) return;
+      if (e.target.closest && e.target.closest('.nt-chip')) return;   // 설교노트 칩은 자기 click으로 처리
       const rr = stage.getBoundingClientRect();
       const fx = (e.clientX - rr.left) / rr.width;
       if (sel) guard(() => tapSelect(e.clientX, e.clientY));   // 고르는 중에는 어디를 눌러도 낱말을 더하거나 뺀다
@@ -1123,6 +1136,9 @@
   stage.addEventListener('pointercancel', (e) => endPointer(e, true));
   window.addEventListener('keydown', (e) => {
     if (!flip && !scroller) return;
+    // 창이 열려 있거나 글을 입력하는 중(검색·노트)에는 띄어쓰기·방향키로 책장이 넘어가지 않게 한다
+    if (!sheet.hidden) return;
+    if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
     if (e.key === 'ArrowRight' || e.key === ' ') turn(1);
     else if (e.key === 'ArrowLeft') turn(-1);
   });
@@ -1202,6 +1218,15 @@
   const sheet = $('#sheet'), sheetBody = $('#sheet-body'), sheetTitle = $('#sheet-title');
   const backBtn = $('#sheet-back');
   let sheetBack = null;
+  // 머리줄 오른쪽의 동작 단추(연필): 설교노트 목록에서만 보인다
+  const actBtn = $('#sheet-act');
+  let sheetAct = null;
+  function setSheetAct(fn, label) {
+    sheetAct = fn || null;
+    actBtn.hidden = !sheetAct;
+    if (label) { actBtn.setAttribute('aria-label', label); actBtn.title = label; }
+  }
+  actBtn.addEventListener('click', () => { if (sheetAct) sheetAct(); });
 
   // 창은 화면 한가운데에 띄운다. 키보드가 올라오면 보이는 영역(visualViewport)의 가운데로 맞춘다.
   // tall=true: 검색처럼 결과 길이가 바뀌는 창은 높이를 고정해 흔들리지 않게 한다.
@@ -1248,6 +1273,7 @@
     sheet.hidden = true;
     ['top', 'left', 'width', 'height', 'right', 'bottom'].forEach((p) => { sheet.style[p] = ''; });
     sheetBack = null;
+    setSheetAct(null);
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
   }
   $('#sheet-close').addEventListener('click', closeSheet);
@@ -1256,6 +1282,7 @@
 
   function showBooks(testament) {
     sheetTitle.textContent = '성경';
+    setSheetAct(null);
     backBtn.hidden = true;
     sheetBack = null;
     const ot = testament !== 'nt';
@@ -1322,6 +1349,7 @@
 
   function showSettings() {
     sheetTitle.textContent = '읽기 설정';
+    setSheetAct(null);
     backBtn.hidden = true;
     sheetBack = null;
     const seg = (map, cur, key) => '<div class="seg">' + Object.keys(map).map((k) =>
@@ -1401,7 +1429,7 @@
   function backupText() {
     return JSON.stringify({
       app: 'bibleflip', ver: 1, savedAt: new Date().toISOString(),
-      pos, tool, anns,
+      pos, tool, anns, notes: notesDB.items,
       settings: { fontSize: settings.fontSize, theme: settings.theme, font: settings.font, layout: settings.layout },
     });
   }
@@ -1427,6 +1455,13 @@
     });
     anns = clean;
     saveAnns();
+    let notes = null;
+    if (Array.isArray(d.notes)) {   // 설교노트가 들어 있는 백업이면 노트도 바꾼다 (예전 백업에는 없으므로 그때는 그대로 둔다)
+      notes = cleanNotes(d.notes);
+      notesDB = { items: notes };
+      saveNotes();
+      noteIdx = null;
+    }
     const p = d.pos;
     if (p && Number.isInteger(p.book) && p.book >= 0 && p.book < bible.books.length &&
         Number.isInteger(p.chapter) && p.chapter >= 0 && p.chapter < bible.books[p.book].chapters.length) {
@@ -1444,7 +1479,32 @@
     if (LAYOUTS[s.layout]) patch.layout = s.layout;
     settings = Object.assign({}, settings, patch);
     store.set('bf.settings', settings);
-    return { verses, marks };
+    return { verses, marks, notes: notes ? notes.length : null };
+  }
+  // 백업에서 읽은 노트를 검사해 쓸 수 있는 것만 남긴다
+  function cleanNotes(list) {
+    const out = [], seen = new Set();
+    list.slice(0, 2000).forEach((n) => {
+      if (!n || typeof n !== 'object') return;
+      const bi = bible.books.findIndex((b) => b.id === n.bk);
+      if (bi < 0) return;
+      const nc = bible.books[bi].chapters.length;
+      const int = (x, lo, hi, d) => (Number.isInteger(x) && x >= lo && x <= hi ? x : d);
+      const c1 = int(n.c1, 1, nc, 1), c2 = int(n.c2, c1, nc, c1);
+      const v1 = int(n.v1, 1, 200, 1), v2 = int(n.v2, 1, 200, v1);
+      let id = typeof n.id === 'string' && /^[A-Za-z0-9]{1,24}$/.test(n.id) ? n.id : newId();
+      while (seen.has(id)) id = newId();
+      seen.add(id);
+      out.push({
+        id, bk: n.bk, c1, v1, c2, v2: c2 === c1 && v2 < v1 ? v1 : v2,
+        title: (typeof n.title === 'string' && n.title.trim() ? n.title : '(제목 없음)').slice(0, 120),
+        body: typeof n.body === 'string' ? n.body.slice(0, 50000) : '',
+        date: typeof n.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(n.date) ? n.date : '',
+        ci: int(n.ci, 0, NOTE_COLORS.length - 1, out.length % NOTE_COLORS.length),
+        ts: Number.isFinite(n.ts) ? n.ts : Date.now(),
+      });
+    });
+    return out;
   }
 
   function showBackup() {
@@ -1453,14 +1513,14 @@
     sheetBack = () => { showAdvanced(); sheetBody.scrollTop = 0; };
     const n = Object.keys(anns).length;
     sheetBody.innerHTML =
-      '<p class="note tight">하이라이트·읽던 위치·글꼴 설정은 <b>이 기기의 이 앱 안</b>에만 저장됩니다. ' +
+      '<p class="note tight">하이라이트·설교노트·읽던 위치·글꼴 설정은 <b>이 기기의 이 앱 안</b>에만 저장됩니다. ' +
       '앱 주소를 옮기거나 앱을 지우면 사라지므로, 그 전에 아래에서 백업해 두세요.</p>' +
-      '<div class="adv-head">내보내기 <small class="sub">(표시한 구절 ' + n + '개)</small></div>' +
+      '<div class="adv-head">내보내기 <small class="sub">(표시한 구절 ' + n + '개 · 설교노트 ' + notesDB.items.length + '개)</small></div>' +
       '<p class="adv-desc">버튼을 눌러 복사한 뒤 메모 앱이나 카카오톡 「나에게」 같은 곳에 붙여 두세요.</p>' +
       '<textarea id="bk-out" class="bk-text" rows="4" readonly aria-label="백업 내용"></textarea>' +
       '<div class="row"><span id="bk-out-msg" class="sub">&nbsp;</span><button class="seg-btn" id="bk-copy" type="button">백업 내용 복사</button></div>' +
       '<div class="adv-head">불러오기</div>' +
-      '<p class="adv-desc">복사해 둔 백업 내용을 아래 상자에 붙여 넣으세요. <b>지금 있는 표시는 모두 백업 내용으로 바뀝니다.</b></p>' +
+      '<p class="adv-desc">복사해 둔 백업 내용을 아래 상자에 붙여 넣으세요. <b>지금 있는 표시와 설교노트는 모두 백업 내용으로 바뀝니다.</b></p>' +
       '<textarea id="bk-in" class="bk-text" rows="4" placeholder="여기에 붙여 넣기" aria-label="불러올 백업 내용"></textarea>' +
       '<div class="row"><span id="bk-in-msg" class="sub">&nbsp;</span><button class="seg-btn" id="bk-apply" type="button">불러오기</button></div>';
     const out = $('#bk-out'), inp = $('#bk-in'), outMsg = $('#bk-out-msg'), inMsg = $('#bk-in-msg');
@@ -1487,7 +1547,7 @@
         const r = applyBackup(inp.value);
         closeSheet();
         rebuild(pos);
-        showToastLine('불러왔습니다 · ' + r.verses + '구절, 표시 ' + r.marks + '개');
+        showToastLine('불러왔습니다 · ' + r.verses + '구절, 표시 ' + r.marks + '개' + (r.notes === null ? '' : ', 설교노트 ' + r.notes + '개'));
       } catch (err) {
         inMsg.textContent = err.message || '불러오지 못했습니다.';
       }
@@ -1498,6 +1558,7 @@
   function showHighlights() {
     clearSelection();
     sheetTitle.textContent = '하이라이트·표시';
+    setSheetAct(null);
     backBtn.hidden = true;
     sheetBack = null;
     const idx = {};
@@ -1544,6 +1605,383 @@
       }
       const b = e.target.closest('.res');
       if (b) { closeSheet(); jumpTo({ book: +b.dataset.b, chapter: +b.dataset.c, verse: +b.dataset.n }); }
+    });
+  }
+
+  // ---------- 설교노트 ----------
+  // 노트마다 제목 · 설교 본문(한 책 안의 시작~끝 구절) · 내용 · 날짜를 적는다.
+  // 본문 옆 여백에는 노트 색 띠(바깥쪽 여백)가 그려지고, 펼친 화면에서는 왼쪽 바깥 여백에 누르면 열리는 노트 표가 놓인다.
+  const saveNotes = () => store.set('bf.notes', notesDB);
+  const noteById = (id) => notesDB.items.find((n) => n.id === id);
+  const noteColor = (id) => { const n = noteById(id); return NOTE_COLORS[(n && Number.isInteger(n.ci) ? n.ci : 0) % NOTE_COLORS.length]; };
+  function pickColor() {   // 아직 가장 적게 쓴 색을 고른다
+    const used = NOTE_COLORS.map(() => 0);
+    notesDB.items.forEach((n) => { if (Number.isInteger(n.ci)) used[n.ci % NOTE_COLORS.length]++; });
+    return used.indexOf(Math.min.apply(null, used));
+  }
+  const pad2 = (x) => (x < 10 ? '0' : '') + x;
+  function todayStr() { const d = new Date(); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+  const dateLabel = (s) => (/^\d{4}-\d{2}-\d{2}$/.test(s || '') ? s.replace(/-/g, '.') : '');
+  function passageLabel(n) {
+    const bi = bookIdx(n.bk);
+    if (bi < 0) return '';
+    const name = bible.books[bi].name;
+    if (n.c1 === n.c2) return name + ' ' + n.c1 + ':' + (n.v1 === n.v2 ? n.v1 : n.v1 + '–' + n.v2);
+    return name + ' ' + n.c1 + ':' + n.v1 + '–' + n.c2 + ':' + n.v2;
+  }
+
+  // 책 → (절 표식 → 그 절을 덮는 노트 id들). 노트가 바뀔 때마다 다시 만든다.
+  let noteIdx = null;
+  function buildNoteIdx() {
+    noteIdx = {};
+    notesDB.items.forEach((n) => {
+      const bi = bookIdx(n.bk);
+      if (bi < 0) return;
+      const book = bible.books[bi];
+      for (let c = n.c1; c <= n.c2; c++) {
+        const vs = book.chapters[c - 1];
+        if (!vs) continue;
+        vs.forEach((v) => {
+          if ((c > n.c1 || v.n >= n.v1) && (c < n.c2 || v.n <= n.v2)) {
+            const m = noteIdx[n.bk] || (noteIdx[n.bk] = {});
+            const k = (c - 1) * 1000 + v.n;
+            (m[k] || (m[k] = [])).push(n.id);
+          }
+        });
+      }
+    });
+  }
+  function noteIdsAt(bookId, k) {
+    if (!noteIdx) buildNoteIdx();
+    const m = noteIdx[bookId];
+    return (m && m[k]) || null;
+  }
+  const noteStyle = (ids) => '--n1:' + noteColor(ids[0]) + (ids[1] ? ';--n2:' + noteColor(ids[1]) : '');
+  function noteAttrs(bookId, k) {   // 문단(<p>)에 붙일 속성 문자열
+    const ids = noteIdsAt(bookId, k);
+    return ids ? ' class="nt" data-n="' + ids.join(' ') + '" style="' + noteStyle(ids) + '"' : '';
+  }
+  function noteChipsHTML(bookId, c0) {   // 접힌 화면: 이 장을 덮는 노트들의 칩
+    return notesDB.items.filter((n) => n.bk === bookId && n.c1 <= c0 + 1 && n.c2 >= c0 + 1)
+      .sort((a, b) => a.ts - b.ts)
+      .map((n) => '<button type="button" class="nt-chip" data-note="' + n.id + '" style="--n1:' + noteColor(n.id) + '"><i></i><span>' + esc(n.title) + '</span></button>').join('');
+  }
+
+  // 화면에 이미 그려진 문단·칩에 노트 표시를 다시 입힌다 (저장·삭제·불러오기 뒤). 쪽 나누기는 건드리지 않는다.
+  function applyNoteMarks() {
+    noteIdx = null;
+    if (!pg || !bible || !bible.books[pg.bookIndex]) return;
+    const bid = bible.books[pg.bookIndex].id;
+    stage.querySelectorAll('p[data-k]').forEach((p) => {
+      const ids = noteIdsAt(bid, +p.dataset.k);
+      if (ids) {
+        p.classList.add('nt');
+        p.dataset.n = ids.join(' ');
+        p.style.setProperty('--n1', noteColor(ids[0]));
+        if (ids[1]) p.style.setProperty('--n2', noteColor(ids[1])); else p.style.removeProperty('--n2');
+      } else if (p.classList.contains('nt')) {
+        p.classList.remove('nt');
+        delete p.dataset.n;
+        p.style.removeProperty('--n1');
+        p.style.removeProperty('--n2');
+      }
+    });
+    if (scroller) {
+      [...scroller.children].forEach((pane, c) => {
+        const box = pane.querySelector('.nt-chips');
+        if (box) box.innerHTML = noteChipsHTML(bid, c);
+      });
+    }
+    refreshTabs();
+  }
+
+  // 펼친 화면의 왼쪽 바깥 여백: 지금 보이는 두 쪽에 있는 노트마다 표 하나. 그 노트 본문이 가장 위에 나오는 줄 높이에 놓는다.
+  const tabsEl = $('#note-tabs');
+  function hideTabs() { clearTimeout(tabsTimer); tabsEl.classList.add('moving'); }
+  let tabsTimer = 0;
+  function refreshTabs(tries) {
+    clearTimeout(tabsTimer);
+    tabsEl.innerHTML = '';
+    tabsEl.classList.remove('moving');
+    if (!bible || !pg || scroller || !flip || !pg.g || !pg.g.spread) return;
+    const size = Math.min(34, pg.g.shiftX - 10);
+    if (size < 24) return;   // 왼쪽 여백이 너무 좁으면 표는 생략하고 띠만 보인다
+    // 지금 펼쳐진 두 쪽(왼쪽 L, 오른쪽 L+1)만 읽는 순서대로 본다. 그 노트 본문이 처음 나오는 줄의 높이를 잡는다.
+    const W = window.innerWidth, top = {};
+    const L = flip.getCurrentPageIndex(), all = stage.querySelectorAll('.page');
+    const want = [all[L], all[L + 1]].filter(Boolean);
+    const shown = want.map((el) => ({ el, r: el.getBoundingClientRect() }))
+      .filter((x) => x.r.width >= 10 && x.r.right > 1 && x.r.left < W - 1);
+    // 쪽이 아직 자리를 잡기 전이면 잠시 뒤 다시 시도한다 (책을 막 만든 직후·책장이 막 넘어간 직후·느린 기기)
+    if (shown.length < want.length && (tries || 0) < 8) { tabsTimer = setTimeout(() => refreshTabs((tries || 0) + 1), 150); return; }
+    shown.forEach((x) => {
+      x.el.querySelectorAll('p.nt').forEach((p) => {
+        const y = p.getBoundingClientRect().top;
+        (p.dataset.n || '').split(' ').forEach((id) => { if (id && !(id in top)) top[id] = y; });
+      });
+    });
+    const rows = Object.keys(top).filter((id) => noteById(id)).map((id) => ({ id, y: top[id] })).sort((a, b) => a.y - b.y);
+    let minY = -1e9;
+    const left = Math.max(2, Math.round((pg.g.shiftX - size) / 2));
+    tabsEl.innerHTML = rows.map((r) => {
+      const y = Math.max(r.y, minY);
+      minY = y + size + 6;
+      const n = noteById(r.id);
+      return '<button type="button" class="nt-tab" data-note="' + r.id + '" aria-label="설교노트: ' + esc(n.title).replace(/"/g, '&quot;') + '" ' +
+        'style="--n1:' + noteColor(r.id) + ';left:' + left + 'px;top:' + Math.round(y) + 'px;width:' + size + 'px;height:' + size + 'px">' +
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h9l4 4V20.5H6z"/><path d="M9.5 12h6M9.5 16h6"/></svg></button>';
+    }).join('');
+  }
+  tabsEl.addEventListener('click', (e) => {
+    const b = e.target.closest('.nt-tab');
+    if (b) { showNoteView(b.dataset.note); openSheet(true); }
+  });
+
+  // --- 작성 중인 내용은 입력할 때마다 기기에 임시 저장한다 (설교를 들으며 쓰다가 앱이 닫혀도 남도록) ---
+  function loadDraft() {
+    let d = null;
+    try { d = JSON.parse(localStorage.getItem('bf.notedraft')); } catch (e) { d = null; }
+    if (!d || typeof d !== 'object') return null;
+    if (d.id && !noteById(d.id)) d.id = null;   // 원래 노트가 지워졌으면 새 노트 초안으로 본다
+    return d;
+  }
+  const saveDraft = (d) => { try { localStorage.setItem('bf.notedraft', JSON.stringify(d)); } catch (e) { /* 무시 */ } };
+  const clearDraft = () => { try { localStorage.removeItem('bf.notedraft'); } catch (e) { /* 무시 */ } };
+
+  // --- 본문 입력 도우미 ---
+  function bookByName(name) {
+    if (Object.prototype.hasOwnProperty.call(ABBR, name)) return ABBR[name];
+    let i = bible.books.findIndex((b) => b.name === name);
+    if (i < 0 && name.length >= 2) i = bible.books.findIndex((b) => b.name.startsWith(name));
+    return i;
+  }
+  // "요 3:16-21", "요한복음 3장 16-21절", "창 1:1-2:3", "시 23", "롬 8-9" 같은 글을 본문 범위로 읽는다. 읽을 수 없으면 null.
+  function parseRange(q) {
+    const m = String(q).trim().match(/^([가-힣]+)\s*(\d+)\s*(?:장|편|[:：.])?\s*(?:(\d+)\s*절?)?\s*(?:[-~–—]\s*(?:(\d+)\s*(?:장|편|[:：.])\s*)?(\d+)\s*절?)?$/);
+    if (!m) return null;
+    const bi = bookByName(m[1]);
+    if (bi < 0) return null;
+    const book = bible.books[bi], last = (c) => book.chapters[c - 1][book.chapters[c - 1].length - 1].n;
+    const has = (c, v) => !!book.chapters[c - 1] && book.chapters[c - 1].some((x) => x.n === v);
+    const c1 = +m[2];
+    if (c1 < 1 || c1 > book.chapters.length) return null;
+    let v1, c2, v2;
+    if (m[3] === undefined) {   // 장 전체(또는 장 범위)
+      c2 = m[5] !== undefined ? +m[5] : c1;
+      if (c2 < c1 || c2 > book.chapters.length) return null;
+      v1 = 1; v2 = last(c2);
+    } else {
+      v1 = +m[3];
+      if (m[5] === undefined) { c2 = c1; v2 = v1; } else if (m[4] !== undefined) { c2 = +m[4]; v2 = +m[5]; } else { c2 = c1; v2 = +m[5]; }
+    }
+    if (c2 < c1 || (c2 === c1 && v2 < v1) || !has(c1, v1) || !has(c2, v2)) return null;
+    return { bi, c1, v1, c2, v2 };
+  }
+  const verseNums = (bi, c) => (bible.books[bi].chapters[c - 1] || []).map((v) => v.n);
+  function nearVerse(list, v) {
+    if (!list.length) return 1;
+    if (list.indexOf(v) >= 0) return v;
+    return list.reduce((a, b) => (Math.abs(b - v) < Math.abs(a - v) ? b : a));
+  }
+  // 현재 읽는 곳을 본문 범위(한 절)로
+  function hereRange() {
+    const bi = Math.min(Math.max(pos.book, 0), bible.books.length - 1), c = Math.min(Math.max(pos.chapter + 1, 1), bible.books[bi].chapters.length);
+    const v = nearVerse(verseNums(bi, c), pos.verse > 0 ? pos.verse : 1);
+    return { bi, c1: c, v1: v, c2: c, v2: v };
+  }
+
+  // --- 노트 목록 (메뉴의 노트 아이콘) ---
+  function showNotes() {
+    clearSelection();
+    sheetTitle.textContent = '설교노트';
+    backBtn.hidden = true;
+    sheetBack = null;
+    setSheetAct(() => showNoteEditor(null), '설교노트 쓰기');
+    const items = notesDB.items.slice().sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.ts - a.ts);
+    const draft = loadDraft();
+    let html = '';
+    if (draft && (draft.title || draft.body || draft.id)) {
+      html += '<div class="nt-draft"><span>작성 중: <b>' + esc(draft.title || '(제목 없음)') + '</b></span>' +
+        '<button type="button" id="nt-resume">이어 쓰기</button><button type="button" id="nt-drop" class="warn">버리기</button></div>';
+    }
+    if (!items.length) {
+      html += '<p class="note">아직 작성한 설교노트가 없습니다.<br>오른쪽 위 <b>연필 ✎</b>을 눌러 <b>제목 → 설교 본문 → 노트 내용</b> 순서로 쓰세요. ' +
+        '작성을 마치면 그 본문 옆 여백에 노트 표시가 생깁니다.</p>';
+    } else {
+      html += '<div class="res-head">' + items.length + '개 노트</div>' + items.map((n) => {
+        const snip = (n.body || '').split('\n').map((s) => s.trim()).find((s) => s) || '';
+        return '<button type="button" class="nt-row" data-id="' + n.id + '" style="--n1:' + noteColor(n.id) + '"><b>' + esc(n.title) + '</b>' +
+          '<span class="nt-meta"><em>' + esc(passageLabel(n)) + '</em>' + (n.date ? ' · ' + dateLabel(n.date) : '') + '</span>' +
+          (snip ? '<span class="nt-snip">' + esc(snip) + '</span>' : '') + '</button>';
+      }).join('');
+    }
+    sheetBody.innerHTML = html;
+    sheetBody.querySelectorAll('.nt-row').forEach((b) => b.addEventListener('click', () => { showNoteView(b.dataset.id); sheetBody.scrollTop = 0; }));
+    const rs = $('#nt-resume'), dr = $('#nt-drop');
+    if (rs) rs.addEventListener('click', () => showNoteEditor(draft.id || null));
+    if (dr) dr.addEventListener('click', () => { clearDraft(); showNotes(); });
+  }
+
+  // --- 노트 보기 ---
+  function showNoteView(id) {
+    const n = noteById(id);
+    if (!n) { showNotes(); return; }
+    clearSelection();
+    sheetTitle.textContent = '설교노트';
+    backBtn.hidden = false;
+    sheetBack = () => { showNotes(); sheetBody.scrollTop = 0; };
+    setSheetAct(() => showNoteEditor(id), '노트 수정');
+    const bi = bookIdx(n.bk);
+    let verses = '';
+    if (bi >= 0) {
+      for (let c = n.c1; c <= n.c2; c++) {
+        (bible.books[bi].chapters[c - 1] || []).forEach((v) => {
+          if ((c > n.c1 || v.n >= n.v1) && (c < n.c2 || v.n <= n.v2)) {
+            verses += '<sup>' + (n.c1 !== n.c2 && (v.n === 1 || (c === n.c1 && v.n === n.v1)) ? c + ':' : '') + v.n + '</sup>' + esc(v.t) + ' ';
+          }
+        });
+      }
+    }
+    sheetBody.innerHTML =
+      '<div class="nv-title" style="border-left:4px solid ' + noteColor(id) + ';padding-left:10px">' + esc(n.title) + '</div>' +
+      '<div class="nv-meta"><b>' + esc(passageLabel(n)) + '</b>' + (n.date ? ' · ' + dateLabel(n.date) : '') + '</div>' +
+      '<div class="nt-actions"><button type="button" class="nt-btn primary" id="nv-go">이 본문으로 이동</button></div>' +
+      (verses ? '<details class="nv-pass"><summary>본문 보기</summary><div class="nv-verses">' + verses + '</div></details>' : '') +
+      (n.body ? '<div class="nv-body">' + esc(n.body) + '</div>' : '<div class="nv-body empty">적어 둔 내용이 없습니다. 오른쪽 위 연필로 내용을 더할 수 있습니다.</div>') +
+      '<div class="nt-actions"><button type="button" class="nt-btn" id="nv-edit">수정</button><button type="button" class="nt-btn warn" id="nv-del">삭제</button></div>';
+    $('#nv-go').addEventListener('click', () => { closeSheet(); jumpTo({ book: bi, chapter: n.c1 - 1, verse: n.v1 }); });
+    $('#nv-edit').addEventListener('click', () => showNoteEditor(id));
+    const del = $('#nv-del');
+    let armed = 0, armTimer = null;
+    del.addEventListener('click', () => {
+      if (!armed) {
+        armed = 1; del.textContent = '한 번 더 누르면 삭제'; del.classList.add('armed');
+        clearTimeout(armTimer);
+        armTimer = setTimeout(() => { armed = 0; del.textContent = '삭제'; del.classList.remove('armed'); }, 4000);
+        return;
+      }
+      clearTimeout(armTimer);
+      notesDB.items = notesDB.items.filter((x) => x.id !== id);
+      saveNotes();
+      const d = loadDraft();
+      if (d && d.id === id) clearDraft();
+      applyNoteMarks();
+      showNotes();
+      showToastLine('설교노트를 삭제했습니다.');
+    });
+  }
+
+  // --- 노트 쓰기·고치기: 제목 → 설교 본문(책·시작·끝을 고르는 선택칸) → 노트 내용 ---
+  function showNoteEditor(id) {
+    clearSelection();
+    const note = id ? noteById(id) : null;
+    const draft = loadDraft();
+    const useDraft = !!draft && (draft.id || null) === (note ? note.id : null) && (draft.title || draft.body || draft.id || Number.isInteger(draft.bi));
+    let f = note ? { bi: bookIdx(note.bk), c1: note.c1, v1: note.v1, c2: note.c2, v2: note.v2 } : hereRange();
+    let title = note ? note.title : '', body = note ? note.body || '' : '', date = note ? note.date || todayStr() : todayStr();
+    if (useDraft) {
+      title = String(draft.title || ''); body = String(draft.body || ''); date = /^\d{4}-\d{2}-\d{2}$/.test(draft.date || '') ? draft.date : date;
+      if (Number.isInteger(draft.bi) && draft.bi >= 0 && draft.bi < bible.books.length) {
+        const nc = bible.books[draft.bi].chapters.length;
+        if (draft.c1 >= 1 && draft.c2 <= nc && draft.c1 <= draft.c2) f = { bi: draft.bi, c1: draft.c1, v1: draft.v1, c2: draft.c2, v2: draft.v2 };
+      }
+    }
+    if (f.bi < 0) f = hereRange();
+    f.v1 = nearVerse(verseNums(f.bi, f.c1), f.v1);
+    f.v2 = nearVerse(verseNums(f.bi, f.c2), f.v2);
+
+    sheetTitle.textContent = note ? '노트 수정' : '노트 쓰기';
+    backBtn.hidden = false;
+    sheetBack = () => { if (note) showNoteView(note.id); else showNotes(); sheetBody.scrollTop = 0; };   // 쓰던 내용은 임시 저장되어 남는다
+    setSheetAct(null);
+    const bkOpts = '<optgroup label="구약">' + bible.books.slice(0, 39).map((b, i) => '<option value="' + i + '">' + esc(b.name) + '</option>').join('') + '</optgroup>' +
+      '<optgroup label="신약">' + bible.books.slice(39).map((b, i) => '<option value="' + (i + 39) + '">' + esc(b.name) + '</option>').join('') + '</optgroup>';
+    sheetBody.innerHTML =
+      '<div class="nt-lab">제목</div>' +
+      '<input id="nt-title" class="nt-in" type="text" maxlength="120" placeholder="설교 제목" autocomplete="off" autocorrect="off" spellcheck="false">' +
+      '<div class="nt-lab">설교 본문 <small>책 · 시작 · 끝을 고르세요</small></div>' +
+      '<input id="nt-quick" class="nt-in quick" type="text" enterkeyhint="done" placeholder="바로 입력 (예: 요 3:16-21)" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">' +
+      '<div class="nt-sel-row"><span class="nt-k">책</span><select id="nt-bk" class="nt-sel wide" aria-label="책">' + bkOpts + '</select>' +
+      '<button type="button" class="seg-btn" id="nt-here">지금 읽는 곳</button></div>' +
+      '<div class="nt-sel-row"><span class="nt-k">시작</span><select id="nt-c1" class="nt-sel" aria-label="시작 장"></select><span class="u u1">장</span>' +
+      '<select id="nt-v1" class="nt-sel" aria-label="시작 절"></select><span class="u">절</span></div>' +
+      '<div class="nt-sel-row"><span class="nt-k">끝</span><select id="nt-c2" class="nt-sel" aria-label="끝 장"></select><span class="u u1">장</span>' +
+      '<select id="nt-v2" class="nt-sel" aria-label="끝 절"></select><span class="u">절</span></div>' +
+      '<div id="nt-ref" class="nt-ref"></div>' +
+      '<div class="nt-lab">노트 내용</div>' +
+      '<textarea id="nt-body" class="nt-text" rows="8" placeholder="설교 내용, 묵상, 적용 …" spellcheck="false"></textarea>' +
+      '<div class="nt-lab">설교 날짜</div>' +
+      '<input id="nt-date" class="nt-in" type="date">' +
+      '<div class="nt-actions"><button type="button" class="nt-btn primary" id="nt-save">작성 완료</button></div>';
+
+    const el = { title: $('#nt-title'), quick: $('#nt-quick'), bk: $('#nt-bk'), c1: $('#nt-c1'), v1: $('#nt-v1'), c2: $('#nt-c2'), v2: $('#nt-v2'), ref: $('#nt-ref'), body: $('#nt-body'), date: $('#nt-date') };
+    el.title.value = title; el.body.value = body; el.date.value = date;
+    const opts = (list) => list.map((x) => '<option value="' + x + '">' + x + '</option>').join('');
+    const grow = () => { el.body.style.height = 'auto'; el.body.style.height = Math.max(190, el.body.scrollHeight + 2) + 'px'; };
+    const bad = () => f.c2 < f.c1 || (f.c2 === f.c1 && f.v2 < f.v1);
+    function persist() {
+      saveDraft({ id: note ? note.id : null, title: el.title.value, body: el.body.value, date: el.date.value, bi: f.bi, c1: f.c1, v1: f.v1, c2: f.c2, v2: f.v2 });
+    }
+    function sync() {
+      const book = bible.books[f.bi];
+      if (el.c1.dataset.bi !== String(f.bi)) {
+        const ch = opts(book.chapters.map((_, i) => i + 1));
+        el.c1.innerHTML = ch; el.c2.innerHTML = ch; el.c1.dataset.bi = String(f.bi);
+      }
+      el.bk.value = String(f.bi);
+      el.c1.value = String(f.c1); el.c2.value = String(f.c2);
+      el.v1.innerHTML = opts(verseNums(f.bi, f.c1)); el.v1.value = String(f.v1);
+      el.v2.innerHTML = opts(verseNums(f.bi, f.c2)); el.v2.value = String(f.v2);
+      sheetBody.querySelectorAll('.u1').forEach((u) => { u.textContent = book.id === 'psa' ? '편' : '장'; });
+      el.ref.classList.remove('bad');
+      el.ref.textContent = passageLabel({ bk: book.id, c1: f.c1, v1: f.v1, c2: f.c2, v2: f.v2 });
+    }
+    el.bk.addEventListener('change', () => { f = { bi: +el.bk.value, c1: 1, v1: 1, c2: 1, v2: 1 }; f.v1 = f.v2 = verseNums(f.bi, 1)[0] || 1; sync(); persist(); });
+    el.c1.addEventListener('change', () => {
+      f.c1 = +el.c1.value; f.v1 = verseNums(f.bi, f.c1)[0] || 1;
+      if (bad()) { f.c2 = f.c1; f.v2 = f.v1; } else f.v2 = nearVerse(verseNums(f.bi, f.c2), f.v2);
+      sync(); persist();
+    });
+    el.v1.addEventListener('change', () => { f.v1 = +el.v1.value; if (bad()) { f.c2 = f.c1; f.v2 = f.v1; } sync(); persist(); });
+    el.c2.addEventListener('change', () => {
+      f.c2 = +el.c2.value; f.v2 = nearVerse(verseNums(f.bi, f.c2), f.v2);
+      if (f.c2 < f.c1) { f.c1 = f.c2; f.v1 = verseNums(f.bi, f.c1)[0] || 1; } else if (f.c2 === f.c1 && f.v2 < f.v1) f.v2 = f.v1;
+      sync(); persist();
+    });
+    el.v2.addEventListener('change', () => { f.v2 = +el.v2.value; if (bad()) f.v1 = f.v2; sync(); persist(); });
+    $('#nt-here').addEventListener('click', () => { f = hereRange(); sync(); persist(); });
+    const quick = () => {
+      const q = el.quick.value.trim();
+      if (!q) return;
+      const r = parseRange(q);
+      if (!r) { el.ref.classList.add('bad'); el.ref.textContent = '읽을 수 없는 본문입니다 (예: 요 3:16-21, 시 23, 창 1:1-2:3)'; return; }
+      f = r; el.quick.value = ''; sync(); persist();
+    };
+    el.quick.addEventListener('change', quick);
+    el.quick.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); quick(); el.quick.blur(); } });
+    el.title.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); el.title.blur(); } });
+    el.title.addEventListener('input', persist);
+    el.date.addEventListener('change', persist);
+    el.body.addEventListener('input', () => { grow(); persist(); });
+    sync();
+    grow();
+    if (useDraft) showToastLine('작성 중이던 내용을 불러왔습니다.');
+
+    $('#nt-save').addEventListener('click', () => {
+      const t = el.title.value.trim();
+      if (!t) { showToastLine('제목을 입력해 주세요.'); el.title.focus(); return; }
+      const rec = {
+        title: t.slice(0, 120), body: el.body.value.slice(0, 50000), date: /^\d{4}-\d{2}-\d{2}$/.test(el.date.value) ? el.date.value : todayStr(),
+        bk: bible.books[f.bi].id, c1: f.c1, v1: f.v1, c2: f.c2, v2: f.v2,
+      };
+      if (note) Object.assign(note, rec, { ts: Date.now() });
+      else notesDB.items.push(Object.assign({ id: newId(), ci: pickColor(), ts: Date.now() }, rec));
+      saveNotes();
+      clearDraft();
+      applyNoteMarks();
+      showNotes();
+      sheetBody.scrollTop = 0;
+      showToastLine('저장했습니다 · ' + passageLabel(rec) + ' 옆 여백에 표시됩니다');
     });
   }
 
@@ -1656,6 +2094,7 @@
 
   function showSearch() {
     sheetTitle.textContent = '검색';
+    setSheetAct(null);
     backBtn.hidden = true;
     sheetBack = null;
     sheetBody.innerHTML =
@@ -1737,6 +2176,7 @@
   onMenu($('#btn-pick'), () => { showBooks(pos.book >= 39 ? 'nt' : 'ot'); openSheet(false); });
   onMenu($('#btn-settings'), () => { showSettings(); openSheet(false); });
   onMenu($('#btn-hl'), () => { showHighlights(); openSheet(false); });
+  onMenu($('#btn-notes'), () => { showNotes(); openSheet(true); });
   onMenu($('#btn-search'), () => {
     const input = showSearch();
     openSheet(true);
