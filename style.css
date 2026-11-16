@@ -257,28 +257,25 @@ body.is-spread .head-row { flex-direction: row; align-items: center; gap: 18px; 
 .chnav button:disabled { opacity: 0; pointer-events: none; }
 
 /* ---------- 설교노트 ---------- */
-/* 본문 옆 여백 표시: 설교노트를 쓴 본문 구절의 바깥쪽 여백에 노트 색 띠를 그린다.
-   왼쪽 쪽(.pl)·한 쪽 화면은 왼쪽, 오른쪽 쪽(.pr)은 오른쪽. 띠는 글자 자리를 차지하지 않아 쪽 나누기에 영향이 없다. */
-.typo p.nt { position: relative; }
-/* 띠는 실제 쪽(.page)·장 칸(.chap)에서만 그린다. 쪽 나누기용 숨은 상자(#measure)에는 그리지 않아, 노트가 쪽 나누기에 영향을 주지 않는다. */
-.page p.nt::before, .chap p.nt::before {
-  content: ''; position: absolute; top: 0; bottom: -.22em; left: calc(-1 * var(--padx)); width: var(--padx);
-  background: linear-gradient(to right, transparent 0 1px, var(--n1, transparent) 1px 4px, var(--n2, transparent) 4px 7px, transparent 7px);
-  pointer-events: none;
+/* 본문 표시: 설교노트를 쓴 구절의 절 번호를 노트 색 배지로 바꾼다. 색·테두리 그림자만 바꾸고 글자 폭은 그대로라 쪽 나누기에 영향이 없다.
+   노트가 둘 이상 겹친 구절은 배지 테두리가 두 번째 노트 색이 된다. */
+.page p.nt sup.vn, .chap p.nt sup.vn {
+  color: #fff; background: var(--n1); border-radius: 6px;
+  box-shadow: 0 0 0 1.5px var(--n2, var(--n1));
 }
-.page.pr p.nt::before {
-  left: auto; right: calc(-1 * var(--padx));
-  background: linear-gradient(to left, transparent 0 1px, var(--n1, transparent) 1px 4px, var(--n2, transparent) 4px 7px, transparent 7px);
-}
-/* 펼친 화면의 왼쪽 바깥 여백(무대 밖)에 놓는 노트 표: 누르면 그 노트가 열린다 */
+/* 펼친 화면: 책 왼쪽 옆면(무대 밖 왼쪽 여백)에 붙는 인덱스 탭. 제목 앞 4글자가 세로로 적히고, 누르면 그 노트가 열린다. */
 #note-tabs { position: fixed; left: 0; top: 0; width: 0; height: 0; z-index: 9; transition: opacity .15s; }
 #note-tabs.moving { opacity: 0; pointer-events: none; }
 .nt-tab {
-  position: absolute; display: flex; align-items: center; justify-content: center;
-  border-radius: 9px; background: var(--n1); color: #fff; touch-action: manipulation;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, .25);
+  position: absolute; display: flex; align-items: center; justify-content: center; padding: 0;
+  border-radius: 9px 0 0 9px; background: var(--n1); color: #fff; touch-action: manipulation;
+  box-shadow: -1px 1px 2px rgba(0, 0, 0, .18);
 }
-.nt-tab svg { width: 60%; height: 60%; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+.nt-tab::after { content: ''; position: absolute; top: -4px; bottom: -4px; left: -14px; right: 0; }   /* 눌리는 영역을 왼쪽·위아래로 넓힌다 */
+.nt-tab b {
+  writing-mode: vertical-rl; -webkit-writing-mode: vertical-rl; text-orientation: upright; -webkit-text-orientation: upright;
+  font: 700 11.5px/1 var(--sans); letter-spacing: .04em; color: #fff; pointer-events: none; white-space: nowrap;
+}
 /* 접힌 화면: 장 제목 밑에 그 장의 설교노트 칩 */
 .nt-chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: -.2em 0 .7em; }
 .nt-chips:empty { display: none; }

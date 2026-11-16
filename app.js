@@ -1704,8 +1704,8 @@
     tabsEl.innerHTML = '';
     tabsEl.classList.remove('moving');
     if (!bible || !pg || scroller || !flip || !pg.g || !pg.g.spread) return;
-    const size = Math.min(34, pg.g.shiftX - 10);
-    if (size < 24) return;   // 왼쪽 여백이 너무 좁으면 표는 생략하고 띠만 보인다
+    const tw = Math.min(23, pg.g.shiftX - 4);
+    if (tw < 16) return;   // 왼쪽 여백이 너무 좁으면 탭은 생략하고 본문의 절 번호 배지만 보인다
     // 지금 펼쳐진 두 쪽(왼쪽 L, 오른쪽 L+1)만 읽는 순서대로 본다. 그 노트 본문이 처음 나오는 줄의 높이를 잡는다.
     const W = window.innerWidth, top = {};
     const L = flip.getCurrentPageIndex(), all = stage.querySelectorAll('.page');
@@ -1720,21 +1720,38 @@
         (p.dataset.n || '').split(' ').forEach((id) => { if (id && !(id in top)) top[id] = y; });
       });
     });
-    const rows = Object.keys(top).filter((id) => noteById(id)).map((id) => ({ id, y: top[id] })).sort((a, b) => a.y - b.y);
-    let minY = -1e9;
-    const left = Math.max(2, Math.round((pg.g.shiftX - size) / 2));
-    tabsEl.innerHTML = rows.map((r) => {
-      const y = Math.max(r.y, minY);
-      minY = y + size + 6;
-      const n = noteById(r.id);
-      return '<button type="button" class="nt-tab" data-note="' + r.id + '" aria-label="설교노트: ' + esc(n.title).replace(/"/g, '&quot;') + '" ' +
-        'style="--n1:' + noteColor(r.id) + ';left:' + left + 'px;top:' + Math.round(y) + 'px;width:' + size + 'px;height:' + size + 'px">' +
-        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h9l4 4V20.5H6z"/><path d="M9.5 12h6M9.5 16h6"/></svg></button>';
-    }).join('');
+    const items = Object.keys(top).filter((id) => noteById(id)).map((id) => {
+      const n = noteById(id);
+      const label = Array.from(n.title.replace(/\s+/g, '')).slice(0, 4).join('');   // 제목 앞 4글자
+      return { id, y0: top[id], label, title: n.title, h: Math.round(Array.from(label).length * 12.5 + 18) };
+    }).sort((p, q) => p.y0 - q.y0);
+    // 겹치지 않게 위에서부터 쌓고, 아래로 넘치면 위로 당긴다. 그래도 안 들어가면 나머지는 "+N" 하나로 줄인다.
+    const topLim = 60, botLim = window.innerHeight - 10, gap = 5;
+    const stack = (list) => {
+      let y = -1e9;
+      list.forEach((it) => { it.y = Math.max(it.y0, y, topLim); y = it.y + it.h + gap; });
+      let lim = botLim;
+      for (let i = list.length - 1; i >= 0; i--) { list[i].y = Math.min(list[i].y, lim - list[i].h); lim = list[i].y - gap; }
+      return !list.length || list[0].y >= topLim;
+    };
+    let list = items;
+    for (let keep = items.length; keep >= 0; keep--) {
+      list = items.slice(0, keep).map((it) => Object.assign({}, it));
+      if (keep < items.length) list.push({ more: items.length - keep, label: '+' + (items.length - keep), title: '설교노트 목록', y0: botLim, h: 34 });
+      if (stack(list)) break;
+    }
+    const left = pg.g.shiftX - tw;   // 탭의 오른쪽 끝이 책 왼쪽 가장자리에 붙는다
+    tabsEl.innerHTML = list.map((it) =>
+      '<button type="button" class="nt-tab" ' + (it.more ? 'data-more="1"' : 'data-note="' + it.id + '"') +
+      ' aria-label="' + (it.more ? '설교노트 더 보기: ' : '설교노트: ') + esc(it.title).replace(/"/g, '&quot;') + '" ' +
+      'style="--n1:' + (it.more ? '#7A7A7A' : noteColor(it.id)) + ';left:' + left + 'px;top:' + Math.round(it.y) + 'px;width:' + tw + 'px;height:' + it.h + 'px">' +
+      '<b>' + esc(it.label) + '</b></button>').join('');
   }
   tabsEl.addEventListener('click', (e) => {
     const b = e.target.closest('.nt-tab');
-    if (b) { showNoteView(b.dataset.note); openSheet(true); }
+    if (!b) return;
+    if (b.dataset.more) showNotes(); else showNoteView(b.dataset.note);
+    openSheet(true);
   });
 
   // --- 작성 중인 내용은 입력할 때마다 기기에 임시 저장한다 (설교를 들으며 쓰다가 앱이 닫혀도 남도록) ---
