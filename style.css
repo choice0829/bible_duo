@@ -257,13 +257,7 @@ body.is-spread .head-row { flex-direction: row; align-items: center; gap: 18px; 
 .chnav button:disabled { opacity: 0; pointer-events: none; }
 
 /* ---------- 설교노트 ---------- */
-/* 본문 표시: 설교노트를 쓴 구절의 절 번호를 노트 색 배지로 바꾼다. 색·테두리 그림자만 바꾸고 글자 폭은 그대로라 쪽 나누기에 영향이 없다.
-   노트가 둘 이상 겹친 구절은 배지 테두리가 두 번째 노트 색이 된다. */
-.page p.nt sup.vn, .chap p.nt sup.vn {
-  color: #fff; background: var(--n1); border-radius: 6px;
-  box-shadow: 0 0 0 1.5px var(--n2, var(--n1));
-}
-/* 펼친 화면: 책 왼쪽 옆면(무대 밖 왼쪽 여백)에 붙는 인덱스 탭. 제목 앞 4글자가 세로로 적히고, 누르면 그 노트가 열린다. */
+/* 펼친 화면: 책 왼쪽 옆면(무대 밖 왼쪽 여백)에 붙는 인덱스 탭. 제목 앞 5글자가 세로로 적히고, 누르면 그 노트가 열린다. */
 #note-tabs { position: fixed; left: 0; top: 0; width: 0; height: 0; z-index: 9; transition: opacity .15s; }
 #note-tabs.moving { opacity: 0; pointer-events: none; }
 .nt-tab {
@@ -271,6 +265,33 @@ body.is-spread .head-row { flex-direction: row; align-items: center; gap: 18px; 
   border-radius: 9px 0 0 9px; background: var(--n1); color: #fff; touch-action: manipulation;
   box-shadow: -1px 1px 2px rgba(0, 0, 0, .18);
 }
+#note-tabs.spot .nt-tab { transition: transform .15s, opacity .15s, box-shadow .15s; }
+#note-tabs.spot .nt-tab:not(.sel) { opacity: .45; }
+#note-tabs.spot .nt-tab.sel { transform: translateX(-7px); box-shadow: -3px 2px 8px rgba(0, 0, 0, .35); }
+/* 스포트라이트: 눌린 노트의 본문(JS가 규칙을 덧붙여 opacity 1로 되돌린다)만 남기고 나머지 글은 흐리게 */
+#stage.spot p[data-k], #stage.spot h2.ch { opacity: .2; transition: opacity .18s; }
+/* 노트 미리보기 카드 */
+#note-peek {
+  position: fixed; bottom: calc(env(safe-area-inset-bottom) + 14px); z-index: 22; background: var(--bg); color: var(--fg);
+  border-radius: 16px; border-top: 5px solid var(--n1, var(--accent)); padding: 13px 18px 12px;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, .28), 0 0 0 1px var(--line); font-family: var(--sans);
+  animation: pk-in .18s ease-out;
+}
+#note-peek[hidden] { display: none; }
+@keyframes pk-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.pk-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.pk-title { font-size: 17px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pk-ref { flex: none; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.pk-body {
+  margin: 7px 0 10px; font-size: 14px; line-height: 1.5; opacity: .85; white-space: pre-line;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.pk-body.empty { color: var(--muted); opacity: 1; }
+.pk-act { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.pk-act button { padding: 9px 14px; border-radius: 9px; touch-action: manipulation; }
+.pk-open { background: var(--n1); color: #fff; font-weight: 700; }
+.pk-fold { background: var(--chip); }
+.pk-hint { margin-left: auto; color: var(--muted); font-size: 12px; }
 .nt-tab::after { content: ''; position: absolute; top: -4px; bottom: -4px; left: -14px; right: 0; }   /* 눌리는 영역을 왼쪽·위아래로 넓힌다 */
 .nt-tab b {
   writing-mode: vertical-rl; -webkit-writing-mode: vertical-rl; text-orientation: upright; -webkit-text-orientation: upright;

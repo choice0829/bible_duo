@@ -685,6 +685,7 @@
   }
 
   function mount(pageIndex) {
+    closeSpot();
     if (flip) { try { flip.destroy(); } catch (e) { /* 무시 */ } flip = null; }
     scroller = null;
     clearSelection();
@@ -1057,6 +1058,7 @@
     pressTimer = setTimeout(() => {
       if (!down || drag) return;
       if (e.target.closest && e.target.closest('.nt-chip')) { down = null; return; }
+      closeSpot();
       const d = down;
       down = null;
       guard(() => beginSelect(d.x, d.y));
@@ -1101,6 +1103,7 @@
       return;
     }
     if (!d || !flip) return;
+    if (spot.id && !dg) { closeSpot(); return; }   // 스포트라이트가 켜진 동안의 탭은 닫기만 한다 (책장은 넘기지 않는다)
     const dx = e.clientX - d.x, dy = e.clientY - d.y;
     const took = performance.now() - d.t;
     if (dg) {
@@ -1135,6 +1138,7 @@
   stage.addEventListener('pointerup', (e) => endPointer(e, false));
   stage.addEventListener('pointercancel', (e) => endPointer(e, true));
   window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && spot.id) { closeSpot(); return; }
     if (!flip && !scroller) return;
     // 창이 열려 있거나 글을 입력하는 중(검색·노트)에는 띄어쓰기·방향키로 책장이 넘어가지 않게 한다
     if (!sheet.hidden) return;
@@ -1262,6 +1266,7 @@
   document.addEventListener('focusout', () => setTimeout(fitSheet, 50));
   let openedAt = 0;
   function openSheet(tall) {
+    closeSpot();
     openedAt = performance.now();
     sheet.classList.toggle('tall', !!tall);
     sheet.hidden = false;
@@ -1697,10 +1702,11 @@
 
   // 펼친 화면의 왼쪽 바깥 여백: 지금 보이는 두 쪽에 있는 노트마다 표 하나. 그 노트 본문이 가장 위에 나오는 줄 높이에 놓는다.
   const tabsEl = $('#note-tabs');
-  function hideTabs() { clearTimeout(tabsTimer); tabsEl.classList.add('moving'); }
+  function hideTabs() { clearTimeout(tabsTimer); closeSpot(); tabsEl.classList.add('moving'); }
   let tabsTimer = 0;
   function refreshTabs(tries) {
     clearTimeout(tabsTimer);
+    closeSpot();
     tabsEl.innerHTML = '';
     tabsEl.classList.remove('moving');
     if (!bible || !pg || scroller || !flip || !pg.g || !pg.g.spread) return;
@@ -1722,7 +1728,7 @@
     });
     const items = Object.keys(top).filter((id) => noteById(id)).map((id) => {
       const n = noteById(id);
-      const label = Array.from(n.title.replace(/\s+/g, '')).slice(0, 4).join('');   // 제목 앞 4글자
+      const label = Array.from(n.title.replace(/\s+/g, '')).slice(0, 5).join('');   // 제목 앞 5글자
       return { id, y0: top[id], label, title: n.title, h: Math.round(Array.from(label).length * 12.5 + 18) };
     }).sort((p, q) => p.y0 - q.y0);
     // 겹치지 않게 위에서부터 쌓고, 아래로 넘치면 위로 당긴다. 그래도 안 들어가면 나머지는 "+N" 하나로 줄인다.
@@ -1750,9 +1756,92 @@
   tabsEl.addEventListener('click', (e) => {
     const b = e.target.closest('.nt-tab');
     if (!b) return;
-    if (b.dataset.more) showNotes(); else showNoteView(b.dataset.note);
-    openSheet(true);
+    if (b.dataset.more) { closeSpot(); showNotes(); openSheet(true); return; }   // "+N" 탭은 노트 목록
+    if (spot.id === b.dataset.note) { closeSpot(); return; }                       // 같은 탭을 한 번 더 누르면 닫기
+    openSpot(b.dataset.note);
   });
+
+  // ---------- 탭을 누르면: 그 노트의 본문만 밝게 남기고(스포트라이트), 아래에 노트 미리보기 카드가 뜬다 ----------
+  // 흐리게 하는 것은 글자의 투명도뿐이라 쪽 나누기·글자 위치에는 영향이 없다.
+  const spot = { id: null };
+  let spotStyleEl = null, peekEl = null;
+  function closeSpot() {
+    if (!spot.id) return;
+    spot.id = null;
+    stage.classList.remove('spot');
+    tabsEl.classList.remove('spot');
+    tabsEl.querySelectorAll('.nt-tab.sel').forEach((t) => t.classList.remove('sel'));
+    if (spotStyleEl) spotStyleEl.textContent = '';
+    if (peekEl) peekEl.hidden = true;
+  }
+  function buildPeek() {
+    peekEl = document.createElement('div');
+    peekEl.id = 'note-peek';
+    peekEl.hidden = true;
+    peekEl.setAttribute('role', 'dialog');
+    peekEl.setAttribute('aria-label', '설교노트 미리보기');
+    peekEl.innerHTML = '<div class="pk-head"><b class="pk-title"></b><span class="pk-ref"></span></div>' +
+      '<div class="pk-body"></div>' +
+      '<div class="pk-act"><button type="button" class="pk-open">노트 열기 ›</button><button type="button" class="pk-fold">본문만 보기</button><span class="pk-hint">바깥을 누르면 닫힘</span></div>';
+    document.body.appendChild(peekEl);
+    peekEl.querySelector('.pk-open').addEventListener('click', () => {
+      const id = spot.id;
+      closeSpot();
+      if (id && noteById(id)) { showNoteView(id); openSheet(true); }
+    });
+    peekEl.querySelector('.pk-fold').addEventListener('click', () => { peekEl.hidden = true; });   // 스포트라이트는 그대로, 카드만 접는다
+  }
+  function openSpot(id) {
+    const n = noteById(id);
+    if (!n || scroller || !flip) return;
+    if (!spotStyleEl) { spotStyleEl = document.createElement('style'); document.head.appendChild(spotStyleEl); }
+    if (!peekEl) buildPeek();
+    spot.id = id;
+    spotStyleEl.textContent = '#stage.spot p[data-n~="' + id.replace(/[^\w-]/g, '') + '"][data-k] { opacity: 1; }';
+    stage.classList.add('spot');
+    tabsEl.classList.add('spot');
+    tabsEl.querySelectorAll('.nt-tab').forEach((t) => t.classList.toggle('sel', t.dataset.note === id));
+    peekEl.style.setProperty('--n1', noteColor(id));
+    peekEl.querySelector('.pk-title').textContent = n.title;
+    peekEl.querySelector('.pk-ref').textContent = [passageLabel(n), dateLabel(n.date)].filter(Boolean).join(' · ');
+    const body = peekEl.querySelector('.pk-body'), txt = (n.body || '').trim();
+    body.textContent = txt || '아직 적은 내용이 없습니다.';
+    body.classList.toggle('empty', !txt);
+    placePeek(id);
+  }
+  // 카드는 밝게 남은 본문을 가리지 않는 쪽(오른쪽 쪽 아래 → 왼쪽 쪽 아래 → 가운데 아래)에 놓는다.
+  function placePeek(id) {
+    const W = window.innerWidth, H = window.innerHeight;
+    const L = flip.getCurrentPageIndex(), all = stage.querySelectorAll('.page');
+    const els = [all[L], all[L + 1]].filter(Boolean);
+    const rects = [], pages = [];
+    els.forEach((el) => {
+      const pr = el.getBoundingClientRect();
+      if (pr.width < 10 || pr.right <= 1 || pr.left >= W - 1) return;
+      pages.push(pr);
+      el.querySelectorAll('p.nt').forEach((p) => {
+        if ((p.dataset.n || '').split(' ').indexOf(id) < 0) return;
+        rects.push(p.getBoundingClientRect());
+      });
+    });
+    const cw = Math.min(400, W - 24);
+    peekEl.style.width = cw + 'px';
+    peekEl.hidden = false;
+    const pr0 = peekEl.getBoundingClientRect(), h = pr0.height, top = pr0.top;
+    const clampX = (x) => Math.round(Math.min(Math.max(x, 8), W - cw - 8));
+    const cands = pages.slice().reverse().map((pr) => clampX(pr.left + (pr.width - cw) / 2));
+    cands.push(clampX((W - cw) / 2));
+    let best = cands[0], bestScore = Infinity;
+    cands.forEach((x) => {
+      let s = 0;
+      rects.forEach((r) => {
+        const ox = Math.min(x + cw, r.right) - Math.max(x, r.left), oy = Math.min(top + h, r.bottom) - Math.max(top, r.top);
+        if (ox > 0 && oy > 0) s += ox * oy;
+      });
+      if (s < bestScore) { bestScore = s; best = x; }
+    });
+    peekEl.style.left = best + 'px';
+  }
 
   // --- 작성 중인 내용은 입력할 때마다 기기에 임시 저장한다 (설교를 들으며 쓰다가 앱이 닫혀도 남도록) ---
   function loadDraft() {
