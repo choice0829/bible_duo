@@ -8,12 +8,16 @@
 
   // ---------- 설정 ----------
   const AUTO_SPREAD_MIN_WIDTH = 700;   // 자동 모드에서 이 폭(px) 이상이면 두 쪽 펼침
+  const AUTO_SPREAD_MIN_LANDSCAPE = 640;   // 가로로 눕힌 화면(폭 > 높이)은 이 폭부터 두 쪽 (아이폰 SE 가로 667 등)
+  const COMPACT_H = 500;   // 높이가 이보다 낮으면(가로로 돌린 아이폰) 머리줄을 작게 줄여 본문 자리를 넓힌다
   // 여백 기본값. 설정 → 고급설정에서 바꾸거나 기본값으로 되돌릴 수 있다.
   //  - 윗 여백: 머리줄(책 이름·메뉴)과 상태 아이콘이 차지하는 윗부분(px)
   //  - 가로 위치: 펼친 화면에서 두 쪽을 오른쪽으로 옮기는 양(px)
   //  - 아래 여백(펼침): 펼친 화면의 맨 아래 비워 두는 높이(px)
   const TOP_DEFAULT = { topSpread: 96, topSingle: 150 };
-  const SHIFT_DEFAULT = 52;
+  const TOP_COMPACT = { topSpread: 58, topSingle: 100 };   // 낮은 화면용
+  const SHIFT_DEFAULT = 52;        // 아이폰 듀오 펼침 기준 (아래 geometry의 duo)
+  const SPREAD_MIN_SHIFT = 28;     // 그 밖의 기기: 책 왼쪽에 최소로 남기는 폭 (노트 탭이 붙는 자리)
   const BOTTOM_SPREAD_DEFAULT = 20;
   // 여백 기본값을 바꿀 때 이 번호를 올리면, 기기에 저장돼 있던 펼침 여백 값이 새 기본값으로 한 번 바뀐다.
   const MARGIN_REV = 19;
@@ -45,11 +49,14 @@
     set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* 무시 */ } },
   };
 
-  let settings = store.get('bf.settings', { fontSize: 18, theme: 'paper', layout: 'auto', font: 'myeongjo', topSpread: TOP_DEFAULT.topSpread, topSingle: TOP_DEFAULT.topSingle });
+  // 처음 설치한 기기는 여백 값을 저장하지 않는다 → 화면 크기·안전영역에 맞춰 자동으로 정해진다 (geometry의 auto).
+  // 고급설정에서 직접 바꾼 값만 저장되고, 그 값이 자동값보다 우선한다.
+  const freshInstall = (() => { try { return localStorage.getItem('bf.settings') === null; } catch (e) { return true; } })();
+  let settings = store.get('bf.settings', { fontSize: 18, theme: 'paper', layout: 'auto', font: 'myeongjo' });
   // 이전 버전에서 저장된 펼침 여백(윗 144 · 아래 8 등)을 새 기본값(96 · 52 · 20)으로 한 번만 바꾼다.
-  // 이후에는 고급설정에서 바꾼 값이 그대로 유지된다.
+  // 이후에는 고급설정에서 바꾼 값이 그대로 유지된다. (처음 설치한 기기는 해당 없음)
   if (settings.marginRev !== MARGIN_REV) {
-    settings = Object.assign({}, settings, {
+    settings = Object.assign({}, settings, freshInstall ? { marginRev: MARGIN_REV } : {
       topSpread: TOP_DEFAULT.topSpread, shiftX: SHIFT_DEFAULT, bottomSpread: BOTTOM_SPREAD_DEFAULT, marginRev: MARGIN_REV,
     });
     store.set('bf.settings', settings);
@@ -100,34 +107,56 @@
     return r;
   }
 
-  // 펼친 화면에서 두 쪽을 오른쪽으로 옮기는 양. 아이폰 듀오는 오른쪽 상태 아이콘 자리만큼 화면이 더 넓은데
-  // 앱에는 그 폭이 빠진 채로 알려져 두 쪽이 왼쪽으로 쏠려 보인다. 설정에서 직접 고칠 수 있다.
-  function spreadShift() {
-    return typeof settings.shiftX === 'number' ? settings.shiftX : SHIFT_DEFAULT;
-  }
+  // 기기마다 다른 값(윗 여백·가로 위치·아래 여백)은 설정에 저장된 값이 있으면 그것을, 없으면 화면에 맞춘 자동값을 쓴다.
+  //  - 아이폰 듀오(펼침): 오른쪽 안전영역만 크게 알려 오고(약 84px) 왼쪽은 0 → 예전과 같은 값(96 · 52 · 20)
+  //  - 노치·다이내믹 아일랜드 아이폰을 가로로 돌린 화면: 좌우 안전영역이 같게 알려 온다 → 양쪽을 그만큼 비운다
+  //  - 낮은 화면(가로로 돌린 아이폰): 머리줄을 작게 줄여 본문 줄 수를 늘린다
   function geometry() {
     const { w: W, h: H } = viewSize();
     const si = safeInsets();
     const spread = settings.layout === 'spread' ||
-      (settings.layout === 'auto' && W >= AUTO_SPREAD_MIN_WIDTH);
+      (settings.layout === 'auto' && (W >= AUTO_SPREAD_MIN_WIDTH || (W >= AUTO_SPREAD_MIN_LANDSCAPE && W > H)));
+    const compact = H < COMPACT_H;
+    // 듀오 펼침: 오른쪽 안전영역만 크게 알려 오거나, 화면 크기가 듀오 펼침(867×587 안팎)이고 왼쪽 안전영역이 없는 경우
+    const duo = spread && si.left < 8 && (si.right >= 60 || (W >= 800 && W <= 940 && H >= 540 && H <= 640));
+    const sym = si.left >= 8 && Math.abs(si.left - si.right) <= 8;
+    const auto = {
+      topSpread: compact ? TOP_COMPACT.topSpread : TOP_DEFAULT.topSpread,
+      topSingle: compact ? TOP_COMPACT.topSingle : TOP_DEFAULT.topSingle,
+      shiftX: duo ? SHIFT_DEFAULT : Math.max(Math.round(si.left), SPREAD_MIN_SHIFT),
+      bottomSpread: duo ? BOTTOM_SPREAD_DEFAULT : Math.max(Math.round(si.bottom), compact ? 10 : BOTTOM_SPREAD_DEFAULT),
+    };
+    const eff = {};
+    Object.keys(auto).forEach((k) => { eff[k] = typeof settings[k] === 'number' ? settings[k] : auto[k]; });
     // 펼친 화면: 오른쪽으로 옮긴 만큼 쪽 폭을 줄여, 오른쪽 끝이 화면 밖으로 잘리지 않게 한다
-    const shiftX = spread ? spreadShift() : 0;
-    const pageW = spread ? Math.floor((W - shiftX) / 2) : W;
-    // 좌우 안전영역은 무시한다. 아이폰 듀오 앱 모드는 오른쪽 상태 아이콘 때문에 오른쪽 안전영역을 84px로 알리는데,
-    // 아이콘은 맨 위에만 있고 윗부분은 따로 비워 두므로 본문 좌우는 끝까지 쓴다.
-    const padX = SIDE_PAD;
+    const shiftX = spread ? eff.shiftX : 0;
+    const rightReserve = spread && sym ? Math.round(si.right) : 0;
+    const pageW = spread ? Math.floor((W - shiftX - rightReserve) / 2) : W;
+    // 좌우 안전영역: 듀오는 오른쪽 상태 아이콘 때문에 오른쪽만 84px로 알리는데 아이콘은 맨 위에만 있고 윗부분은 따로 비워 두므로
+    // 본문 좌우는 끝까지 쓴다. 노치 아이폰 가로 화면(좌우가 같음)은 한 쪽 보기일 때 그만큼 비운다. (펼침은 책 자체를 안쪽으로 둔다)
+    const padX = !spread && sym ? Math.max(SIDE_PAD, Math.round(Math.max(si.left, si.right))) : SIDE_PAD;
     // 윗부분: 머리줄(책 이름·버튼)과 상태 아이콘 자리. 아랫부분 여백은 최소로 줄여 이쪽으로 옮겼다.
-    const topSetting = spread ? settings.topSpread : settings.topSingle;
+    const topSetting = spread ? eff.topSpread : eff.topSingle;
     const padTop = Math.max(si.top + 56, Math.min(TOP_MAX, Math.round(topSetting) || (spread ? TOP_DEFAULT.topSpread : TOP_DEFAULT.topSingle)));
-    const padBottom = spread
-      ? (typeof settings.bottomSpread === 'number' ? settings.bottomSpread : BOTTOM_SPREAD_DEFAULT)
-      : si.bottom + 10;
+    const padBottom = spread ? eff.bottomSpread : si.bottom + 10;
     return {
-      W, H, spread, pageW, pageH: H, bookW: spread ? pageW * 2 : pageW,
-      padX, padTop, padBottom, si, shiftX,
+      W, H, spread, compact, duo, sym, pageW, pageH: H, bookW: spread ? pageW * 2 : pageW,
+      padX, padTop, padBottom, si, shiftX, eff,
       textW: pageW - padX * 2, textH: H - padTop - padBottom,
     };
   }
+
+  // 책 이름이 길어 한 줄에 다 안 들어가면 글자를 조금씩 줄여 이름이 잘리지 않게 한다 (최소 24px)
+  function fitTitle() {
+    const b = $('#loc-book');
+    if (!b) return;
+    const root = document.documentElement.style;
+    const base = lastTitleFs || 44;
+    let fs = base;
+    root.setProperty('--title-fs', fs + 'px');
+    while (fs > 24 && b.scrollWidth > b.clientWidth + 1) { fs -= 2; root.setProperty('--title-fs', fs + 'px'); }
+  }
+  let lastTitleFs = 44;
 
   function applyLook(g) {
     const root = document.documentElement.style;
@@ -139,7 +168,8 @@
     root.setProperty('--padtop', g.padTop + 'px');
     root.setProperty('--padbottom', g.padBottom + 'px');
     // 상단: 접힘 = 책 이름 위, 메뉴 아래(본문 바로 위) / 펼침 = 한 줄(책 이름 왼쪽, 메뉴 오른쪽)
-    const titleFs = g.spread ? 44 : 44, titleH = Math.round(titleFs * 1.2);
+    const titleFs = g.compact ? 30 : 44, titleH = Math.round(titleFs * 1.2);
+    lastTitleFs = titleFs;
     const rowH = g.spread ? Math.max(titleH, 34) : titleH + 4 + 34;
     root.setProperty('--title-fs', titleFs + 'px');
     root.setProperty('--head-top', Math.max(g.si.top + 4, g.padTop - 12 - rowH) + 'px');
@@ -152,8 +182,12 @@
     stage.style.height = g.H + 'px';
     stage.style.marginLeft = g.shiftX ? g.shiftX + 'px' : '';   // 펼친 화면 가운데 맞춤
     root.setProperty('--shiftx', g.shiftX + 'px');
+    // 머리줄(책 이름·메뉴)의 왼쪽 끝: 펼침은 책 왼쪽 가장자리 + 14, 한 쪽은 안전영역 + 14. (좌우가 같은 아이폰은 책 자체가 이미 안쪽이다)
+    root.setProperty('--headx', ((g.spread ? (g.sym ? 0 : g.si.left) + g.shiftX : g.si.left) + 14) + 'px');
     stage.classList.toggle('spread', g.spread);
     document.body.classList.toggle('is-spread', g.spread);
+    document.body.classList.toggle('is-compact', g.compact);
+    fitTitle();
   }
 
   // ---------- 표시(하이라이트 · 동그라미 · 네모 · 물결 · 밑줄) ----------
@@ -453,6 +487,33 @@
   // ---------- 쪽 나누기 ----------
   const tick = () => new Promise((r) => setTimeout(r, 0));
 
+  // 쪽 나누기 결과(쪽마다 시작 조각 번호)는 기기에 저장해 두었다가, 같은 책·화면 크기·글꼴이면 다시 계산하지 않고 쓴다.
+  // 저장된 결과가 이 기기에서 실제로 맞는지 몇 쪽만 확인하고, 틀리면 버리고 새로 나눈다. (글꼴·OS가 바뀌면 키가 달라진다)
+  const PGC_KEY = 'bf.pgc', PGC_MAX = 24;
+  function pgcKey(u, g) {
+    const cs = getComputedStyle(measure);
+    return ['2', bible.version || '', u.bookId, u.T.length, g.textW, g.textH, settings.fontSize, settings.font,
+      cs.fontFamily, cs.lineHeight, cs.letterSpacing, cs.wordSpacing, navigator.userAgent].join('|');
+  }
+  function pgcLoad(key) {
+    try {
+      const d = JSON.parse(localStorage.getItem(PGC_KEY));
+      const v = d && d.map && d.map[key];
+      return Array.isArray(v) && v.length && v[0] === 0 ? v : null;
+    } catch (e) { return null; }
+  }
+  function pgcSave(key, starts) {
+    try {
+      let d = JSON.parse(localStorage.getItem(PGC_KEY));
+      if (!d || !Array.isArray(d.order) || !d.map) d = { order: [], map: {} };
+      d.order = d.order.filter((k) => k !== key);
+      d.order.push(key);
+      d.map[key] = starts;
+      while (d.order.length > PGC_MAX) delete d.map[d.order.shift()];
+      localStorage.setItem(PGC_KEY, JSON.stringify(d));
+    } catch (e) { /* 저장 공간이 없으면 무시 */ }
+  }
+
   async function paginate(u, g, gen) {
     measure.style.width = g.textW + 'px';
     measure.style.height = (g.textH - 2) + 'px';   // 2px 여유: 마지막 줄이 잘리지 않게
@@ -462,28 +523,44 @@
       return measure.scrollHeight <= measure.clientHeight;
     };
 
+    // 저장된 결과가 있으면 처음·가운데·끝 쪽이 실제로 넘치지 않는지만 확인하고 그대로 쓴다
+    const ckey = pgcKey(u, g);
+    const cached = pgcLoad(ckey);
+    if (cached && cached[cached.length - 1] < n) {
+      const m = cached.length;
+      const probe = [0, m >> 1, m - 1].filter((p, j, a) => a.indexOf(p) === j);
+      const good = probe.every((p) => fits(cached[p], (p + 1 < m ? cached[p + 1] : n) - cached[p]));
+      if (good) { measure.innerHTML = ''; return cached; }
+    }
+
     const starts = [];
     let i = 0, guess = 150;
     while (i < n) {
       starts.push(i);
       const maxK = n - i;
-      let hi = Math.min(maxK, Math.ceil(guess * 1.4) + 8);
-      let hiFits = fits(i, hi);
-      while (hiFits && hi < maxK) {
-        hi = Math.min(maxK, hi * 2);
-        hiFits = fits(i, hi);
-      }
-      let k;
-      if (hiFits) {
-        k = hi;                       // 남은 글이 모두 들어간다
-      } else {
-        let lo = 1, up = hi;          // lo: 들어감, up: 안 들어감
-        while (up - lo > 1) {
-          const mid = (lo + up) >> 1;
-          if (fits(i, mid)) lo = mid; else up = mid;
+      // 앞 쪽이 담은 조각 수(guess) 근처에서 시작해 점점 넓혀 가며 경계를 찾는다 (쪽마다 분량이 비슷해 대여섯 번이면 끝난다)
+      const g0 = Math.max(1, Math.min(maxK, guess));
+      let step = Math.max(3, Math.round(g0 * 0.05)), lo, up;   // lo: 들어감, up: 안 들어감
+      if (fits(i, g0)) {
+        lo = g0; up = maxK + 1;
+        while (lo < maxK) {
+          const t = Math.min(maxK, lo + step);
+          if (fits(i, t)) { lo = t; step *= 2; } else { up = t; break; }
         }
-        k = lo;
+      } else {
+        up = g0; lo = 0;
+        while (up > 1) {
+          const t = Math.max(1, up - step);
+          if (fits(i, t)) { lo = t; break; }
+          up = t; step *= 2;
+        }
+        if (lo === 0) lo = 1;
       }
+      while (up - lo > 1) {
+        const mid = (lo + up) >> 1;
+        if (fits(i, mid)) lo = mid; else up = mid;
+      }
+      let k = lo;
       // 쪽 끝에 장 제목이나 절 번호만 덩그러니 남지 않게 앞으로 물린다
       while (k > 1 && u.T[i + k - 1] !== 2) k--;
       i += k;
@@ -494,6 +571,7 @@
       }
     }
     measure.innerHTML = '';
+    if (fontsReady) pgcSave(ckey, starts);   // 글꼴이 다 준비된 상태에서 나눈 결과만 저장한다
     return starts;
   }
 
@@ -543,16 +621,23 @@
     }, 150);
   }
 
+  // 글씨체 파일(보통 + 굵은 것)이 모두 준비될 때까지 기다린다. 한쪽만 기다리면, 굵은 글씨(장 제목 등)가 늦게 들어와
+  // 쪽 나누기가 틀어질 수 있다. 8초 안에 못 불러오면 기다리지 않고 진행하되, 그때의 쪽 나누기는 저장하지 않는다.
+  let fontsReady = true;
   async function ensureFont() {
+    fontsReady = true;
     const f = FONTS[settings.font] || FONTS.myeongjo;
     if (!f.face) return;
     try {
-      await Promise.race([
-        document.fonts.load('18px "' + f.face + '"', '가나다라 1:2'),
-        document.fonts.load('700 18px "' + f.face + '"', '가나다라 1:2'),
-        new Promise((r) => setTimeout(r, 8000)),
+      const r = await Promise.race([
+        Promise.all([
+          document.fonts.load('18px "' + f.face + '"', '가나다라 1:2'),
+          document.fonts.load('700 18px "' + f.face + '"', '가나다라 1:2'),
+        ]).then(() => 'ok'),
+        new Promise((res) => setTimeout(() => res('timeout'), 8000)),
       ]);
-    } catch (e) { /* 글꼴을 못 불러오면 기본 글꼴로 대체되어 보인다 */ }
+      fontsReady = r === 'ok';
+    } catch (e) { fontsReady = false; /* 글꼴을 못 불러오면 기본 글꼴로 대체되어 보인다 */ }
   }
 
   async function rebuild(target, highlight) {
@@ -560,7 +645,7 @@
     showLoading(true);
     await tick();
     const g = geometry();
-    lastGeo = [g.W, g.H, g.si.top, g.si.bottom].join('x');
+    lastGeo = [g.W, g.H, g.si.top, g.si.bottom, g.si.left, g.si.right].join('x');
     applyLook(g);
     await ensureFont();   // 글씨체 파일이 준비된 뒤에 쪽을 나눠야 쪽 경계가 맞는다
     if (gen !== generation) return;
@@ -738,6 +823,7 @@
     const book = bible.books[pos.book];
     $('#loc-book').textContent = book.name;
     $('#loc-ch').textContent = (pos.chapter + 1) + (book.id === 'psa' ? '편' : '장');
+    fitTitle();
   }
 
   function jumpTo(p) {
@@ -1153,7 +1239,7 @@
   function checkGeometry() {
     if (!bible) return;
     const g = geometry();
-    const key = [g.W, g.H, g.si.top, g.si.bottom].join('x');
+    const key = [g.W, g.H, g.si.top, g.si.bottom, g.si.left, g.si.right].join('x');
     if (key !== lastGeo) rebuild(pos);
   }
   function onResize() {
@@ -1386,9 +1472,7 @@
     backBtn.hidden = false;
     sheetBack = () => { showSettings(); sheetBody.scrollTop = 0; };
     const g = geometry();
-    const topSp = settings.topSpread, topSi = settings.topSingle;
-    const shift = typeof settings.shiftX === 'number' ? settings.shiftX : SHIFT_DEFAULT;
-    const bot = typeof settings.bottomSpread === 'number' ? settings.bottomSpread : BOTTOM_SPREAD_DEFAULT;
+    const topSp = g.eff.topSpread, topSi = g.eff.topSingle, shift = g.eff.shiftX, bot = g.eff.bottomSpread;
     // 한 항목 = 이름 + 값 조절(− 값 +) + 설명
     const item = (name, sub, key, step, val, minus, plus, desc) =>
       '<div class="adv"><div class="row"><span>' + name + ' <small class="sub">' + sub + '</small></span><div class="stepper">' +
@@ -1411,22 +1495,24 @@
         '접은 상태에서 본문이 시작되는 높이입니다. 접은 화면은 책 이름 아래에 메뉴 아이콘이 한 줄 더 있어서, 너무 줄이면 본문과 겹칩니다.') +
       '<div class="row"><span>여백 기본값으로 되돌리기</span><button class="seg-btn" id="adv-reset" type="button">되돌리기</button></div>' +
       '<button class="row rowlink" id="go-bk" type="button"><span>데이터 백업 <small class="sub">하이라이트 · 읽던 위치 내보내기/불러오기</small></span><span class="chev">›</span></button>' +
-      '<p class="note">기본값: 윗 여백(펼침) ' + TOP_DEFAULT.topSpread + ' · 가로 위치 ' + SHIFT_DEFAULT + ' · 아래 여백(펼침) ' + BOTTOM_SPREAD_DEFAULT + ' · 윗 여백(한 쪽) ' + TOP_DEFAULT.topSingle +
+      '<p class="note">기본값은 기기와 화면에 맞춰 자동으로 정해집니다(듀오 펼침: 윗 ' + TOP_DEFAULT.topSpread + ' · 가로 위치 ' + SHIFT_DEFAULT + ' · 아래 ' + BOTTOM_SPREAD_DEFAULT + ', 한 쪽 윗 ' + TOP_DEFAULT.topSingle + '). 가로로 돌린 아이폰은 머리줄이 작아지고 노치 쪽이 비워집니다.' +
       '<br>값을 바꾸면 본문이 잠시 뒤에 새로 정렬됩니다. 읽던 위치는 그대로 유지됩니다.</p>' +
       '<div class="adv-head">화면 정보</div>' +
       '<p class="note tight">현재 화면 ' + g.W + ' × ' + g.H + ' px (창 ' + window.innerWidth + ' × ' + window.innerHeight + ') · ' + (g.spread ? '펼침(두 쪽)' : '한 쪽') +
-      ' (자동 기준: 폭 ' + AUTO_SPREAD_MIN_WIDTH + 'px 이상)<br>안전영역 위 ' + g.si.top + ' · 아래 ' + g.si.bottom + ' · 좌 ' + g.si.left + ' · 우 ' + g.si.right + '</p>' +
+      ' (자동 기준: 폭 ' + AUTO_SPREAD_MIN_WIDTH + 'px 이상, 또는 가로 화면이면 ' + AUTO_SPREAD_MIN_LANDSCAPE + 'px 이상)<br>안전영역 위 ' + g.si.top + ' · 아래 ' + g.si.bottom + ' · 좌 ' + g.si.left + ' · 우 ' + g.si.right + '</p>' +
       '<p class="note diag"><b>화면 진단</b><br>' + diagText() + '</p>';
     const LIMITS = { topSpread: [TOP_MIN_SPREAD, TOP_MAX], topSingle: [TOP_MIN_SINGLE, TOP_MAX], shiftX: [0, 160], bottomSpread: [0, 80] };
     sheetBody.querySelectorAll('[data-adv]').forEach((b) => b.addEventListener('click', () => {
-      const key = b.dataset.adv, cur = key === 'shiftX' ? shift : key === 'bottomSpread' ? bot : settings[key];
+      const key = b.dataset.adv, cur = geometry().eff[key];
       const next = Math.min(LIMITS[key][1], Math.max(LIMITS[key][0], cur + (+b.dataset.step)));
       if (next !== cur) changeSettings({ [key]: next }, showAdvanced);
     }));
     $('#go-bk').addEventListener('click', () => { showBackup(); sheetBody.scrollTop = 0; });
-    $('#adv-reset').addEventListener('click', () => changeSettings({
-      topSpread: TOP_DEFAULT.topSpread, topSingle: TOP_DEFAULT.topSingle, shiftX: SHIFT_DEFAULT, bottomSpread: BOTTOM_SPREAD_DEFAULT,
-    }, showAdvanced));
+    // 되돌리기 = 저장한 값을 지워 기기에 맞는 자동값으로 돌아간다. (듀오는 예전 기본값 그대로)
+    $('#adv-reset').addEventListener('click', () => changeSettings(
+      geometry().duo
+        ? { topSpread: TOP_DEFAULT.topSpread, topSingle: TOP_DEFAULT.topSingle, shiftX: SHIFT_DEFAULT, bottomSpread: BOTTOM_SPREAD_DEFAULT }
+        : { topSpread: undefined, topSingle: undefined, shiftX: undefined, bottomSpread: undefined }, showAdvanced));
   }
 
   // ---------- 데이터 백업: 하이라이트·읽던 위치·글꼴 설정을 글자로 내보내고 다시 불러온다 ----------

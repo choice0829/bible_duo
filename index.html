@@ -16,6 +16,9 @@
   <title>책장성경</title>
 </head>
 <body class="theme-paper">
+  <script>/* 저장된 테마를 화면이 그려지기 전에 적용해, 야간 테마에서 실행할 때 밝은 화면이 번쩍이지 않게 한다 */
+    try { var t = JSON.parse(localStorage.getItem('bf.settings')).theme; if (/^[a-z]+$/.test(t)) document.body.className = 'theme-' + t; } catch (e) {}
+  </script>
   <div id="stage"></div>
   <div id="measure" class="typo" aria-hidden="true"></div>
 
