@@ -107,6 +107,16 @@
     return r;
   }
 
+  // 머리줄 크기: 접힘(한 쪽) = 책 이름 위 + 메뉴 아래(두 줄), 펼침 = 한 줄. 높이를 CSS와 같은 값으로 계산해 둔다.
+  const HEAD_TOP_GAP = 4;    // 안전영역(상태 표시줄) 아래에서 머리줄까지
+  const HEAD_BODY_GAP = 8;   // 머리줄 아래에서 본문 첫 줄까지 (최소)
+  const MENU_H = 36, MENU_H_COMPACT = 32, HEAD_INNER_GAP = 4;
+  function headBox(spread, compact) {
+    const titleFs = compact ? 30 : 44, titleH = Math.ceil(titleFs * 1.2);
+    const menuH = compact ? MENU_H_COMPACT : MENU_H;
+    return { titleFs, titleH, menuH, rowH: spread ? Math.max(titleH, menuH) : titleH + HEAD_INNER_GAP + menuH };
+  }
+
   // 기기마다 다른 값(윗 여백·가로 위치·아래 여백)은 설정에 저장된 값이 있으면 그것을, 없으면 화면에 맞춘 자동값을 쓴다.
   //  - 아이폰 듀오(펼침): 오른쪽 안전영역만 크게 알려 오고(약 84px) 왼쪽은 0 → 예전과 같은 값(96 · 52 · 20)
   //  - 노치·다이내믹 아일랜드 아이폰을 가로로 돌린 화면: 좌우 안전영역이 같게 알려 온다 → 양쪽을 그만큼 비운다
@@ -136,8 +146,15 @@
     // 본문 좌우는 끝까지 쓴다. 노치 아이폰 가로 화면(좌우가 같음)은 한 쪽 보기일 때 그만큼 비운다. (펼침은 책 자체를 안쪽으로 둔다)
     const padX = !spread && sym ? Math.max(SIDE_PAD, Math.round(Math.max(si.left, si.right))) : SIDE_PAD;
     // 윗부분: 머리줄(책 이름·버튼)과 상태 아이콘 자리. 아랫부분 여백은 최소로 줄여 이쪽으로 옮겼다.
+    // 머리줄(책 이름·메뉴)이 실제로 차지하는 높이를 계산해, 본문이 언제나 그 아래에서 시작하게 한다.
+    // (상태 표시줄 자리가 큰 기기의 세로 화면에서 메뉴 단추가 본문 첫 줄을 덮던 문제)
+    const hb = headBox(spread, compact);
     const topSetting = spread ? eff.topSpread : eff.topSingle;
-    const padTop = Math.max(si.top + 56, Math.min(TOP_MAX, Math.round(topSetting) || (spread ? TOP_DEFAULT.topSpread : TOP_DEFAULT.topSingle)));
+    const padTop = Math.max(
+      si.top + 56,
+      Math.ceil(si.top + HEAD_TOP_GAP + hb.rowH + HEAD_BODY_GAP),
+      Math.min(TOP_MAX, Math.round(topSetting) || (spread ? TOP_DEFAULT.topSpread : TOP_DEFAULT.topSingle))
+    );
     const padBottom = spread ? eff.bottomSpread : si.bottom + 10;
     return {
       W, H, spread, compact, duo, sym, pageW, pageH: H, bookW: spread ? pageW * 2 : pageW,
@@ -168,11 +185,10 @@
     root.setProperty('--padtop', g.padTop + 'px');
     root.setProperty('--padbottom', g.padBottom + 'px');
     // 상단: 접힘 = 책 이름 위, 메뉴 아래(본문 바로 위) / 펼침 = 한 줄(책 이름 왼쪽, 메뉴 오른쪽)
-    const titleFs = g.compact ? 30 : 44, titleH = Math.round(titleFs * 1.2);
+    const hb = headBox(g.spread, g.compact), titleFs = hb.titleFs, rowH = hb.rowH;
     lastTitleFs = titleFs;
-    const rowH = g.spread ? Math.max(titleH, 34) : titleH + 4 + 34;
     root.setProperty('--title-fs', titleFs + 'px');
-    root.setProperty('--head-top', Math.max(g.si.top + 4, g.padTop - 12 - rowH) + 'px');
+    root.setProperty('--head-top', Math.max(g.si.top + HEAD_TOP_GAP, g.padTop - 12 - rowH) + 'px');
     document.body.className = document.body.className
       .replace(/\btheme-\w+/g, '').trim() + ' theme-' + settings.theme;
     const bg = getComputedStyle(document.body).getPropertyValue('--bg').trim();
@@ -640,7 +656,20 @@
     } catch (e) { fontsReady = false; /* 글꼴을 못 불러오면 기본 글꼴로 대체되어 보인다 */ }
   }
 
+  // 다시 만드는 일이 진행 중인 횟수(0이면 쉬는 중)와, 확인 때문에 다시 만드는 경우 표시
+  let building = 0, verifying = false;
   async function rebuild(target, highlight) {
+    const fromVerify = verifying; verifying = false;
+    if (!fromVerify) verifyTries = 0;
+    const gen = generation + 1;
+    building++;
+    try { await rebuildNow(target, highlight); }
+    finally {
+      building--;
+      if (gen === generation && !building) { posFreezeUntil = 0; scheduleVerify(); }
+    }
+  }
+  async function rebuildNow(target, highlight) {
     const gen = ++generation;
     showLoading(true);
     await tick();
@@ -681,6 +710,19 @@
     return el;
   }
 
+  // 책장 라이브러리는 창 크기가 바뀔 때마다 스스로 다시 계산하는 처리기를 창(window)에 달아 두는데,
+  // 우리 설정(마우스 이벤트 끔)에서는 destroy()가 이를 떼어 주지 않아 회전할 때마다 쌓이고 오류를 냈다.
+  // 크기 변화는 우리가 직접 다시 만들어 처리하므로, 만들자마자 떼어 둔다.
+  function detachFlipResize(f) {
+    try { const ui = f && f.getUI && f.getUI(); if (ui && ui.removeHandlers) ui.removeHandlers(); } catch (e) { /* 무시 */ }
+  }
+  function killFlip() {
+    if (!flip) return;
+    detachFlipResize(flip);
+    try { flip.destroy(); } catch (e) { /* 무시 */ }
+    flip = null;
+  }
+
   // 접힌 화면: 한 장(chapter)이 한 칸. 위아래로 읽고, 옆으로 밀면 다음·이전 장이 슬라이드로 넘어온다.
   let scrollTimer = null;
   function chapterHTML(book, c) {
@@ -717,7 +759,7 @@
   }
 
   function mountChapters(target) {
-    if (flip) { try { flip.destroy(); } catch (e) { /* 무시 */ } flip = null; }
+    killFlip();
     clearSelection();
     stage.innerHTML = '';
     stage.classList.add('scroll');
@@ -749,6 +791,7 @@
     root.addEventListener('scroll', () => {
       clearTimeout(scrollTimer);
       scrollTimer = setTimeout(() => {
+        if (posFrozen()) return;   // 회전·접기 중에 흔들린 스크롤 값으로 읽던 위치가 바뀌지 않게 한다
         const w = root.clientWidth || 1;
         const idx = Math.round(root.scrollLeft / w);
         if (Math.abs(root.scrollLeft - idx * w) > 3) return;   // 아직 넘어가는 중
@@ -771,7 +814,7 @@
 
   function mount(pageIndex) {
     closeSpot();
-    if (flip) { try { flip.destroy(); } catch (e) { /* 무시 */ } flip = null; }
+    killFlip();
     scroller = null;
     clearSelection();
     stage.innerHTML = '';
@@ -802,6 +845,7 @@
       useMouseEvents: false,   // 끌기·탭은 아래 우리 코드가 직접 처리한다 (뒤로 넘기기가 안 되던 문제)
     });
     flip.loadFromHTML(pages);
+    detachFlipResize(flip);
     flip.on('flip', (e) => { clearSelection(); onPage(e.data, true); });
     // 책장이 넘어가는 동안에는 여백의 노트 표를 숨기고, 멈추면(read) 현재 쪽에 맞춰 다시 놓는다
     flip.on('changeState', (e) => { if (e.data === 'read') { clearTimeout(tabsTimer); tabsTimer = setTimeout(() => refreshTabs(0), 120); } else hideTabs(); });
@@ -1234,17 +1278,91 @@
   });
 
   // ---------- 크기 변화(접기/펼치기, 회전) ----------
-  // 접거나 펼친 직후에는 화면 크기가 잠깐 어긋나게 읽힐 수 있어, 조금 뒤에 한 번 더 확인한다.
-  let resizeTimers = [];
-  function checkGeometry() {
-    if (!bible) return;
-    const g = geometry();
-    const key = [g.W, g.H, g.si.top, g.si.bottom, g.si.left, g.si.right].join('x');
-    if (key !== lastGeo) rebuild(pos);
-  }
+  // 회전·접기 직후에는 화면 크기와 안전영역(env) 값이 한동안 어긋나게 읽히거나 여러 번 바뀐다.
+  // 그래서 ① 첫 변화를 느끼면 바로 덮개(로딩 화면)로 가리고 ② 값이 연달아 같게 읽힐 때까지 기다린 뒤(최대 3초)
+  // ③ 그 값으로 책을 다시 만들고 ④ 다 만든 뒤에도 실제로 그려진 위치가 계산과 맞는지 몇 번 확인해 어긋나면 한 번 더 만든다.
+  // 회전하는 동안 스크롤 위치가 흔들려 읽던 곳이 바뀌지 않도록, 변화 직전의 읽던 위치를 기억해 두었다가 그 위치로 만든다.
+  const geoKey = (g) => [g.W, g.H, g.si.top, g.si.bottom, g.si.left, g.si.right].join('x');
+  let settleTimer = 0, settleStart = 0, settleKey = '', settleSame = 0;
+  let rotPos = null;            // 회전 직전의 읽던 위치
+  let posFreezeUntil = 0;       // 이 시각까지는 스크롤로 읽던 위치를 바꾸지 않는다
+  let verifyTimers = [], verifyTries = 0;
+  let rotCount = 0, rotRebuilt = 0, rotLast = '';
+  const posFrozen = () => Date.now() < posFreezeUntil;
+
   function onResize() {
-    resizeTimers.forEach(clearTimeout);
-    resizeTimers = [setTimeout(checkGeometry, 250), setTimeout(checkGeometry, 900)];
+    if (!bible) return;
+    if (!settleStart) {   // 새 변화의 처음
+      settleStart = Date.now();
+      rotPos = Object.assign({}, pos);
+      verifyTries = 0;
+      let g0 = null;
+      try { g0 = geometry(); } catch (e) { /* 무시 */ }
+      if (g0 && geoKey(g0) !== lastGeo) showLoading(true);   // 어긋난 화면이 잠깐이라도 보이지 않게 가린다
+    }
+    posFreezeUntil = Date.now() + 3500;
+    verifyTimers.forEach(clearTimeout); verifyTimers = [];
+    clearTimeout(settleTimer); settleKey = ''; settleSame = 0;
+    settleTimer = setTimeout(settleTick, 120);
+  }
+  function settleTick() {
+    const g = geometry(), key = geoKey(g);
+    if (key === settleKey) settleSame++; else { settleKey = key; settleSame = 0; }
+    const waited = Date.now() - settleStart;
+    if (settleSame >= 2 || waited > 3000) {   // 같은 값이 연달아 읽히면(약 0.25초) 안정된 것으로 본다
+      const target = rotPos || pos, n = settleSame, w = waited;
+      settleStart = 0; rotPos = null;
+      rotCount++;
+      if (key !== lastGeo) {
+        rotRebuilt++;
+        rotLast = g.W + '×' + g.H + ' 안전영역 ' + [g.si.top, g.si.right, g.si.bottom, g.si.left].join('/') + ' · ' + w + 'ms 기다림(' + n + ') → 다시 만듦';
+        rebuild(target);   // 다 만든 뒤 확인은 rebuild 끝에서 예약한다
+      } else {
+        rotLast = g.W + '×' + g.H + ' · ' + w + 'ms → 그대로';
+        if (!building) { posFreezeUntil = 0; showLoading(false); scheduleVerify(); }
+      }
+      return;
+    }
+    settleTimer = setTimeout(settleTick, 120);
+  }
+  // 실제로 그려진 모습이 계산과 같은지 본다. 다르면 어긋난 이유를 문자열로 돌려준다.
+  function layoutProblem() {
+    if (!bible || !pg || !pg.g) return '';
+    const g = pg.g, out = [];
+    const near = (a, b, t) => Math.abs(a - b) <= (t === undefined ? 1.5 : t);
+    const { w: W, h: H } = viewSize();
+    if (W !== g.W || H !== g.H) out.push('창크기 ' + W + '×' + H + '≠' + g.W + '×' + g.H);
+    else if (geoKey(geometry()) !== lastGeo) out.push('안전영역 바뀜');   // 안전영역(env) 값은 바뀌어도 알려 주는 이벤트가 없다
+    const st = stage.getBoundingClientRect();
+    if (!near(st.top, 0) || !near(st.height, g.H) || !near(st.width, g.bookW) || !near(st.left, g.shiftX)) {
+      out.push('무대 ' + Math.round(st.left) + ',' + Math.round(st.top) + ' ' + Math.round(st.width) + '×' + Math.round(st.height));
+    }
+    if (scroller) {
+      const r = scroller.getBoundingClientRect();
+      if (!near(r.top, g.padTop) || !near(r.bottom, g.H)) out.push('본문칸 ' + Math.round(r.top) + '~' + Math.round(r.bottom));
+    } else if (flip) {
+      try {
+        const rc = flip.getRender().getRect();
+        if (!near(rc.top, 0) || !near(rc.height, g.pageH) || !near(rc.pageWidth, g.pageW)) out.push('책 ' + Math.round(rc.left) + ',' + Math.round(rc.top) + ' ' + Math.round(rc.pageWidth) + '×' + Math.round(rc.height));
+      } catch (e) { /* 무시 */ }
+    }
+    const hr = document.querySelector('.head-row');
+    if (hr) {
+      const r = hr.getBoundingClientRect();
+      if (r.bottom > g.padTop + 0.5) out.push('머리줄이 본문 위로 ' + Math.round(r.bottom - g.padTop) + 'px 겹침');
+    }
+    return out.join(' · ');
+  }
+  function scheduleVerify() {
+    verifyTimers.forEach(clearTimeout);
+    verifyTimers = [500, 1400, 3000].map((ms) => setTimeout(() => {
+      if (settleStart || building || !pg) return;
+      const why = layoutProblem();
+      if (!why) return;
+      healLast = '배치 어긋남: ' + why;
+      healCount++;
+      if (verifyTries++ < 3) { rotRebuilt++; rotLast = healLast; verifying = true; rebuild(pos); }
+    }, ms));
   }
   window.addEventListener('resize', onResize);
   window.addEventListener('orientationchange', onResize);
@@ -1264,6 +1382,7 @@
     if (window.scrollY || window.scrollX) out.push('창스크롤 ' + Math.round(window.scrollX) + ',' + Math.round(window.scrollY));
     if (document.documentElement.scrollTop || document.body.scrollTop) out.push('문서스크롤');
     if (vv && !typing && (Math.abs(vv.offsetTop) > 1 || Math.abs(vv.offsetLeft) > 1)) out.push('보이는영역 ' + Math.round(vv.offsetLeft) + ',' + Math.round(vv.offsetTop));
+    if (vv && !typing && Math.abs(vv.scale - 1) > 0.02) out.push('배율 ' + vv.scale.toFixed(2));   // 회전 뒤 화면이 확대·축소된 채 남는 경우
     const st = stage.getBoundingClientRect();
     if (Math.abs(st.top) > 1) out.push('무대 위 ' + Math.round(st.top));
     if (stage.scrollTop || stage.scrollLeft) out.push('무대스크롤');
@@ -1283,6 +1402,7 @@
     }
     healCount++;
     healLast = found.join(' · ');
+    if (found.some((f) => f.indexOf('배율') === 0)) kickViewport();
     try { window.scrollTo(0, 0); } catch (e) { /* 무시 */ }
     document.documentElement.scrollTop = 0; document.body.scrollTop = 0;
     stage.scrollTop = 0; stage.scrollLeft = 0; stage.style.transform = '';
@@ -1293,6 +1413,17 @@
       rebuild(pos);
     }
   }
+  // 아이폰은 회전한 뒤 화면 배율이 1이 아닌 채로 남기도 한다. 배율을 1로 고정하는 값을 잠깐 넣었다가 되돌려 바로잡는다.
+  let kickAt = 0;
+  function kickViewport() {
+    if (Date.now() - kickAt < 4000) return;
+    kickAt = Date.now();
+    const m = document.querySelector('meta[name="viewport"]');
+    if (!m) return;
+    const base = m.getAttribute('content') || '';
+    m.setAttribute('content', base + ', minimum-scale=1, maximum-scale=1');
+    setTimeout(() => m.setAttribute('content', base), 400);
+  }
   let healRaf = 0;
   const healSoon = () => { if (!healRaf) healRaf = requestAnimationFrame(() => { healRaf = 0; heal(); }); };
   window.addEventListener('scroll', healSoon, true);   // 쪽 안쪽이 스크롤되는 것도 잡는다
@@ -1300,7 +1431,12 @@
   ['pointerup', 'pointercancel', 'touchend'].forEach((ev) => window.addEventListener(ev, () => { setTimeout(heal, 80); setTimeout(heal, 600); }));
   document.addEventListener('focusout', () => { setTimeout(heal, 100); setTimeout(heal, 500); });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(heal, 200); });
-  setInterval(() => { if (!document.hidden) heal(); }, 1500);
+  // 안전영역 값만 늦게 바뀌는 경우(알림 이벤트가 없다)를 위해, 가끔 측정값이 만들 때와 같은지 본다
+  function lateGeoCheck() {
+    if (!bible || !pg || building || settleStart) return;
+    if (geoKey(geometry()) !== lastGeo) onResize();
+  }
+  setInterval(() => { if (!document.hidden) { heal(); lateGeoCheck(); } }, 1500);
   // 위쪽 메뉴줄·도구 상자를 끌어도 문서 전체가 끌려 움직이지 않게 막는다
   ['#topbar', '#ann-bar'].forEach((q) => $(q).addEventListener('touchmove', (e) => { if (e.cancelable) e.preventDefault(); }, { passive: false }));
 
@@ -1423,6 +1559,8 @@
       '쪽 ' + R(vis),
       '본문 ' + R(vis && vis.querySelector('.txt')),
       '밀림 바로잡음 ' + healCount + '번' + (healLast ? ' (마지막: ' + healLast + ')' : '') + ' · 스크롤 ' + Math.round(window.scrollY) + ' · 보이는 영역 위 ' + (v ? Math.round(v.offsetTop) : '-'),
+      '안전영역 위/오른/아래/왼 ' + (g ? [g.si.top, g.si.right, g.si.bottom, g.si.left].map(Math.round).join('/') : '-') + ' · 머리줄 아래 ' + (document.querySelector('.head-row') ? Math.round(document.querySelector('.head-row').getBoundingClientRect().bottom) : '-') + ' · 본문 시작 ' + (g ? g.padTop : '-'),
+      '회전·접기 ' + rotCount + '번(다시 만듦 ' + rotRebuilt + ')' + (rotLast ? ' · 마지막: ' + rotLast : ''),
     ].join('<br>');
   }
 
