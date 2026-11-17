@@ -93,7 +93,9 @@
       h: Math.floor(vp.clientHeight || window.innerHeight),
     };
   }
+  let siLast = null, nudgeUntil = 0;   // 가벼운 확인(viewport 갈아 끼우기) 중에는 안전영역이 잠깐 0으로 읽히므로, 그동안은 직전 값을 쓴다
   function safeInsets() {
+    if (siLast && Date.now() < nudgeUntil) return Object.assign({}, siLast);
     const probe = document.createElement('div');
     probe.style.cssText = 'position:fixed;left:0;top:0;visibility:hidden;pointer-events:none;' +
       'padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)';
@@ -104,7 +106,8 @@
       bottom: parseFloat(cs.paddingBottom) || 0, left: parseFloat(cs.paddingLeft) || 0,
     };
     probe.remove();
-    return r;
+    siLast = r;
+    return Object.assign({}, r);
   }
 
   // 머리줄 크기: 접힘(한 쪽) = 책 이름 위 + 메뉴 아래(두 줄), 펼침 = 한 줄. 높이를 CSS와 같은 값으로 계산해 둔다.
@@ -1317,7 +1320,7 @@
     posFreezeUntil = Date.now() + 3500;
     verifyTimers.forEach(clearTimeout); verifyTimers = [];
     clearTimeout(settleTimer); settleKey = ''; settleSame = 0;
-    settleTimer = setTimeout(settleTick, 120);
+    settleTimer = setTimeout(settleTick, 80);
   }
   function settleTick() {
     const g = geometry(), key = geoKey(g);
@@ -1334,7 +1337,7 @@
       settleTimer = setTimeout(settleTick, 500);
       return;
     }
-    if ((settleSame >= 2 && orientOk) || waited > (recTries ? 9000 : 3000)) {   // 같은 값이 연달아 읽히면(약 0.25초) 안정된 것으로 본다
+    if ((settleSame >= 2 && orientOk) || waited > (recTries ? 9000 : 3000)) {   // 같은 값이 연달아 읽히면(약 0.2초) 안정된 것으로 본다
       if (!scaleOff()) scaleKicks = 0;
       // 안정된 값이 '어긋난 상태'(가로인데 세로 때의 안전영역)이면 되돌려 본다: 1단계 → 2단계 → 앱 다시 시작(2분에 한 번)
       const bad = suspectGeo(g);
@@ -1355,6 +1358,7 @@
         recGiveUp[key] = true;
         addRecLog('되돌리지 못함 → 그대로 둠 (' + bad + ')');
       }
+      if (!bad && key !== lastGeo && softSuspect(g)) softNudge(g);
       takeSnap('회전 뒤', g);
       const target = rotPos || pos, n = settleSame, w = waited;
       settleStart = 0; rotPos = null;
@@ -1369,7 +1373,7 @@
       }
       return;
     }
-    settleTimer = setTimeout(settleTick, 120);
+    settleTimer = setTimeout(settleTick, 80);
   }
   // 실제로 그려진 모습이 계산과 같은지 본다. 다르면 어긋난 이유를 문자열로 돌려준다.
   function layoutProblem() {
@@ -1493,24 +1497,32 @@
   const hms = () => { const d = new Date(); return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':'); };
   function addRecLog(msg) { recLog.push(hms() + ' ' + msg); while (recLog.length > 6) recLog.shift(); }
   // CSS 단위(vw·lvw·svw·dvw)로 잰 화면 크기. 어느 값이 실제 화면과 어긋나는지 보려는 용도다.
-  function unitProbe() {
+  function unitSizes() {
     const el = document.createElement('div');
     el.style.cssText = 'position:fixed;left:0;top:0;visibility:hidden;pointer-events:none;';
     document.body.appendChild(el);
-    const out = [];
+    const out = {};
     [['vw', 'vh'], ['lvw', 'lvh'], ['svw', 'svh'], ['dvw', 'dvh']].forEach((u) => {
-      let s = '-';
+      out[u[0]] = null;
       try {
         if (window.CSS && CSS.supports && CSS.supports('width', '100' + u[0])) {
           el.style.width = '100' + u[0]; el.style.height = '100' + u[1];
           const r = el.getBoundingClientRect();
-          s = Math.round(r.width) + '×' + Math.round(r.height);
+          out[u[0]] = [Math.round(r.width), Math.round(r.height)];
         }
       } catch (e) { /* 무시 */ }
-      out.push(u[0] + ' ' + s);
     });
     el.remove();
-    return out.join(' · ');
+    return out;
+  }
+  function unitProbe() {
+    const o = unitSizes();
+    return Object.keys(o).map((k) => k + ' ' + (o[k] ? o[k][0] + '×' + o[k][1] : '-')).join(' · ');
+  }
+  // 바깥 창·큰 화면(lvh) 높이와 앱이 아는 높이(H)의 차. 가로 화면에서 이 차가 크면 앱이 아는 화면이 실제보다 낮다는 뜻이다.
+  function heightGap(H) {
+    const o = unitSizes();
+    return Math.max(window.outerHeight || 0, o.lvw ? o.lvw[1] : 0, o.vw ? o.vw[1] : 0) - H;
   }
   function takeSnap(tag, g0) {
     try {
@@ -1529,13 +1541,28 @@
     touchMax = { x: Math.max(touchMax.x, Math.round(e.clientX)), y: Math.max(touchMax.y, Math.round(e.clientY)) };
     if (e.clientX >= window.innerWidth - 0.5 || e.clientY >= window.innerHeight - 0.5) { touchOut++; touchLast = Math.round(e.clientX) + ',' + Math.round(e.clientY); }
   }, true);
-  // 이 값이 나오면 '화면 정보가 어긋난 상태'로 본다. (실제 아이폰·아이패드는 가로에서 이런 값이 나오지 않는다)
+  // 가로인데 앱이 아는 화면 높이가 바깥 창보다 확실히 낮으면 '어긋난 상태'로 본다. (세로 화면에서는 상태 표시줄 때문에 차이가 정상이다)
+  // 이 기준에 걸릴 때만 1·2단계와 앱 다시 시작을 한다. (듀오는 정상 가로 화면에서도 안전영역이 0/0/34/0으로 읽히므로 그 값만으로는 판단하지 않는다)
+  // (사파리 창에서는 주소창 때문에 차이가 정상이므로, 홈 화면에 설치해 연 앱(standalone)에서만 본다)
+  function isStandalone() {
+    try { return navigator.standalone === true || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches); } catch (e) { return false; }
+  }
   function suspectGeo(g) {
+    if (!(g.W > g.H) || g.si.top >= 8 || !isStandalone()) return '';
+    const gap = heightGap(g.H);
+    return gap >= 40 ? '가로인데 앱이 아는 높이가 바깥 창보다 ' + Math.round(gap) + 'px 낮음' : '';
+  }
+  // 정상일 수도 있는 값(가로인데 안전영역이 아래 34뿐): 기다리지 않고 한 번만 viewport를 갈아 끼워 값을 새로 읽게 한다.
+  function softSuspect(g) {
     const si = g.si;
-    if (g.W > g.H && si.bottom >= 30 && si.top < 8 && si.left < 8 && si.right < 8) {
-      return '가로인데 안전영역이 세로 때의 값(아래 ' + Math.round(si.bottom) + ')으로 읽힘';
-    }
-    return '';
+    return g.W > g.H && si.bottom >= 30 && si.top < 8 && si.left < 8 && si.right < 8;
+  }
+  function softNudge(g) {
+    siLast = Object.assign({}, g.si);
+    nudgeUntil = Date.now() + 450;
+    swapViewport(VIEWPORT_LOCK.replace('viewport-fit=cover', 'viewport-fit=contain'));
+    setTimeout(() => swapViewport(VIEWPORT_LOCK), 250);
+    addRecLog('가벼운 확인 1회');
   }
   // 되돌리기 1·2단계 (앱을 껐다 켜지 않는 것들)
   function doRecover(level) {
@@ -1740,6 +1767,7 @@
       '지금 단위 ' + unitProbe() + ' · 문서 ' + document.documentElement.clientWidth + '×' + document.documentElement.clientHeight +
         ' · 바깥 ' + window.outerWidth + '×' + window.outerHeight + ' · 쓸 수 있는 화면 ' + screen.availWidth + '×' + screen.availHeight +
         ' · 방향 ' + (screen.orientation ? screen.orientation.type + ' ' + screen.orientation.angle + '°' : '-'),
+      '앱이 아는 높이와 바깥 창 높이의 차 ' + (g ? Math.round(heightGap(g.H)) : '-') + ' (가로에서 40 이상이면 어긋남)',
       '터치 최대 ' + touchMax.x + ',' + touchMax.y + ' · 앱이 아는 화면 밖 ' + touchOut + '번' + (touchLast ? ' (마지막 ' + touchLast + ')' : ''),
       '어긋남 복구 ' + (recLog.length ? recLog.join(' / ') : '없음') + (rec.t ? ' · 앱 다시 시작 ' + (rec.n || 0) + '번' + (rec.noauto ? '(자동 끔)' : '') : ''),
       '<b>최근 화면 기록</b> (오래된 것부터)<br>' + (snaps.length ? snaps.map((x) => '· ' + x).join('<br>') : '-'),
