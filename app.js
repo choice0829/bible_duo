@@ -676,6 +676,7 @@
     await tick();
     const g = geometry();
     lastGeo = [g.W, g.H, g.si.top, g.si.bottom, g.si.left, g.si.right].join('x');
+    if (!launchSnapped) { launchSnapped = true; takeSnap('시작', g); afterRestartCheck(g); }
     applyLook(g);
     await ensureFont();   // 글씨체 파일이 준비된 뒤에 쪽을 나눠야 쪽 경계가 맞는다
     if (gen !== generation) return;
@@ -794,6 +795,7 @@
       clearTimeout(scrollTimer);
       scrollTimer = setTimeout(() => {
         if (posFrozen()) return;   // 회전·접기 중에 흔들린 스크롤 값으로 읽던 위치가 바뀌지 않게 한다
+        if (scroller !== root || !root.isConnected) return;   // 이미 치워진 옛 화면(세로 → 가로로 돌린 직후)의 늦은 스크롤 알림은 버린다
         const w = root.clientWidth || 1;
         const idx = Math.round(root.scrollLeft / w);
         if (Math.abs(root.scrollLeft - idx * w) > 3) return;   // 아직 넘어가는 중
@@ -1332,8 +1334,28 @@
       settleTimer = setTimeout(settleTick, 500);
       return;
     }
-    if ((settleSame >= 2 && orientOk) || waited > 3000) {   // 같은 값이 연달아 읽히면(약 0.25초) 안정된 것으로 본다
+    if ((settleSame >= 2 && orientOk) || waited > (recTries ? 9000 : 3000)) {   // 같은 값이 연달아 읽히면(약 0.25초) 안정된 것으로 본다
       if (!scaleOff()) scaleKicks = 0;
+      // 안정된 값이 '어긋난 상태'(가로인데 세로 때의 안전영역)이면 되돌려 본다: 1단계 → 2단계 → 앱 다시 시작(2분에 한 번)
+      const bad = suspectGeo(g);
+      if (!bad) {
+        if (recTries) addRecLog('정상 값으로 돌아옴(' + recTries + '단계 뒤)');
+        recTries = 0; recGiveUp = {};
+      } else if (key !== lastGeo && !recGiveUp[key]) {
+        if (recTries < 2 && waited < 9000) {
+          recTries++;
+          addRecLog(bad + ' → ' + recTries + '단계 되돌리기');
+          doRecover(recTries);
+          rotLast = bad + ' → ' + recTries + '단계 되돌리기';
+          settleKey = ''; settleSame = 0;
+          settleTimer = setTimeout(settleTick, 800);
+          return;
+        }
+        if (canAutoRestart()) { restartApp(bad, true); return; }
+        recGiveUp[key] = true;
+        addRecLog('되돌리지 못함 → 그대로 둠 (' + bad + ')');
+      }
+      takeSnap('회전 뒤', g);
       const target = rotPos || pos, n = settleSame, w = waited;
       settleStart = 0; rotPos = null;
       rotCount++;
@@ -1447,14 +1469,123 @@
   function kickViewport(force) {
     if (Date.now() - kickAt < (force ? 300 : 1500) || kickTotal >= 40) return false;
     kickAt = Date.now(); kickTotal++;
+    return swapViewport(VIEWPORT_LOCK);
+  }
+  function swapViewport(content) {
     const old = document.querySelector('meta[name="viewport"]');
     if (!old || !old.parentNode) return false;
     const m = document.createElement('meta');
     m.setAttribute('name', 'viewport');
-    m.setAttribute('content', VIEWPORT_LOCK);
+    m.setAttribute('content', content);
     old.parentNode.replaceChild(m, old);
     return true;
   }
+
+  // ---------- 화면 기록 · 어긋남 복구 (v28) ----------
+  // 아이폰 듀오는 가로 → 세로 → 가로로 돌린 뒤, 앱이 받는 화면 정보(안전영역 등)가 실제 화면과 맞지 않는 채 남는 일이 있다.
+  // (예: 가로인데 안전영역이 세로 때의 '아래 34'로 읽히고 화면이 위로 올라가 있음) 이 값은 앱이 직접 고칠 수 없으므로
+  //  ① 그런 상태를 알아채면 viewport 태그 갈아 끼우기 → 문서 다시 계산시키기 → (마지막으로) 앱 다시 시작 순서로 되돌려 보고
+  //  ② 몇 번 돌렸는지와 회전 때마다의 화면 값을 '화면 진단'에 남겨, 정상일 때와 비교할 수 있게 한다.
+  const snaps = (() => { const s = store.get('bf.snaps', { list: [] }); return Array.isArray(s.list) ? s.list.slice(-8).map(String) : []; })();
+  const recLog = [];
+  let recTries = 0, recGiveUp = {}, launchSnapped = false;
+  let touchMax = { x: 0, y: 0 }, touchOut = 0, touchLast = '';
+  const hms = () => { const d = new Date(); return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':'); };
+  function addRecLog(msg) { recLog.push(hms() + ' ' + msg); while (recLog.length > 6) recLog.shift(); }
+  // CSS 단위(vw·lvw·svw·dvw)로 잰 화면 크기. 어느 값이 실제 화면과 어긋나는지 보려는 용도다.
+  function unitProbe() {
+    const el = document.createElement('div');
+    el.style.cssText = 'position:fixed;left:0;top:0;visibility:hidden;pointer-events:none;';
+    document.body.appendChild(el);
+    const out = [];
+    [['vw', 'vh'], ['lvw', 'lvh'], ['svw', 'svh'], ['dvw', 'dvh']].forEach((u) => {
+      let s = '-';
+      try {
+        if (window.CSS && CSS.supports && CSS.supports('width', '100' + u[0])) {
+          el.style.width = '100' + u[0]; el.style.height = '100' + u[1];
+          const r = el.getBoundingClientRect();
+          s = Math.round(r.width) + '×' + Math.round(r.height);
+        }
+      } catch (e) { /* 무시 */ }
+      out.push(u[0] + ' ' + s);
+    });
+    el.remove();
+    return out.join(' · ');
+  }
+  function takeSnap(tag, g0) {
+    try {
+      const g = g0 || geometry(), v = window.visualViewport;
+      const so = window.screen && screen.orientation ? screen.orientation.type.replace(/-(primary|secondary)/, '') + ' ' + screen.orientation.angle + '°' : '-';
+      snaps.push(hms() + ' ' + tag + ' · ' + (g.H >= g.W ? '세로' : '가로') + ' ' + g.W + '×' + g.H +
+        ' · 안전영역 ' + [g.si.top, g.si.right, g.si.bottom, g.si.left].map(Math.round).join('/') +
+        ' · 배율 ' + (v ? v.scale.toFixed(2) : '-') + ' · ' + unitProbe() +
+        ' · 바깥 ' + window.outerWidth + '×' + window.outerHeight + ' · 화면 ' + screen.width + '×' + screen.height + ' ' + so);
+      while (snaps.length > 8) snaps.shift();
+      store.set('bf.snaps', { list: snaps });
+    } catch (e) { /* 무시 */ }
+  }
+  // 손가락이 닿은 곳이 앱이 아는 화면 밖이면 기록해 둔다 (앱이 아는 화면이 실제보다 작다는 증거)
+  window.addEventListener('pointerdown', (e) => {
+    touchMax = { x: Math.max(touchMax.x, Math.round(e.clientX)), y: Math.max(touchMax.y, Math.round(e.clientY)) };
+    if (e.clientX >= window.innerWidth - 0.5 || e.clientY >= window.innerHeight - 0.5) { touchOut++; touchLast = Math.round(e.clientX) + ',' + Math.round(e.clientY); }
+  }, true);
+  // 이 값이 나오면 '화면 정보가 어긋난 상태'로 본다. (실제 아이폰·아이패드는 가로에서 이런 값이 나오지 않는다)
+  function suspectGeo(g) {
+    const si = g.si;
+    if (g.W > g.H && si.bottom >= 30 && si.top < 8 && si.left < 8 && si.right < 8) {
+      return '가로인데 안전영역이 세로 때의 값(아래 ' + Math.round(si.bottom) + ')으로 읽힘';
+    }
+    return '';
+  }
+  // 되돌리기 1·2단계 (앱을 껐다 켜지 않는 것들)
+  function doRecover(level) {
+    try { window.scrollTo(0, 0); } catch (e) { /* 무시 */ }
+    if (level === 1) {   // 안전영역 계산 방식을 잠깐 바꿨다가 되돌려 값을 새로 읽게 한다
+      swapViewport(VIEWPORT_LOCK.replace('viewport-fit=cover', 'viewport-fit=contain'));
+      setTimeout(() => swapViewport(VIEWPORT_LOCK), 250);
+    } else {             // 문서를 잠깐 숨겼다 보여 다시 계산시키고, 가로 폭 기준도 잠깐 바꿨다 되돌린다
+      const de = document.documentElement;
+      de.style.display = 'none'; void de.offsetHeight; de.style.display = '';
+      swapViewport(VIEWPORT_LOCK.replace('width=device-width', 'width=980'));
+      setTimeout(() => swapViewport(VIEWPORT_LOCK), 250);
+    }
+  }
+  const REC_WAIT = 120000;   // 자동으로 앱을 다시 시작하는 건 2분에 한 번까지
+  function canAutoRestart() {
+    const rec = store.get('bf.rec', { t: 0, n: 0, noauto: false });
+    return !rec.noauto && Date.now() - (rec.t || 0) > REC_WAIT;
+  }
+  // 앱 다시 시작: 읽던 위치를 저장하고 페이지를 새로 읽는다 (새로 켠 것과 같은 화면 계산을 다시 받는다)
+  function restartApp(why, auto) {
+    try {
+      store.set('bf.pos', rotPos || pos);
+      const rec = store.get('bf.rec', { t: 0, n: 0, noauto: false });
+      store.set('bf.rec', { t: Date.now(), n: (rec.n || 0) + 1, noauto: !!rec.noauto, auto: !!auto, why: String(why || '') });
+      addRecLog('앱 다시 시작' + (auto ? '(자동)' : '(직접)'));
+      store.set('bf.snaps', { list: snaps });
+    } catch (e) { /* 무시 */ }
+    location.reload();
+  }
+  // 고급설정의 '다시 맞추기': 1·2단계를 차례로 하고 화면을 처음부터 다시 계산해 책을 새로 만든다
+  function refitScreen() {
+    addRecLog('직접 다시 맞추기');
+    doRecover(1);
+    setTimeout(() => doRecover(2), 450);
+    setTimeout(() => { lastGeo = ''; onResize(); }, 900);   // lastGeo를 비워 값이 같아도 책을 새로 만들게 한다
+  }
+  // 앱을 다시 켠 직후에도 어긋난 값이면, 다시 시작해도 소용없다는 뜻이므로 자동 다시 시작은 더 하지 않는다
+  function afterRestartCheck(g) {
+    try {
+      const rec = store.get('bf.rec', { t: 0, n: 0, noauto: false });
+      if (rec.t && Date.now() - rec.t < 30000 && suspectGeo(g)) {
+        store.set('bf.rec', Object.assign({}, rec, { noauto: true }));
+        addRecLog('다시 시작 뒤에도 어긋난 값 → 자동 다시 시작 끔');
+      } else if (rec.t && Date.now() - rec.t < 30000) {
+        addRecLog('다시 시작 뒤 정상');
+      }
+    } catch (e) { /* 무시 */ }
+  }
+
   let healRaf = 0;
   const healSoon = () => { if (!healRaf) healRaf = requestAnimationFrame(() => { healRaf = 0; heal(); }); };
   window.addEventListener('scroll', healSoon, true);   // 쪽 안쪽이 스크롤되는 것도 잡는다
@@ -1594,6 +1725,7 @@
     const vis = [...document.querySelectorAll('#stage .page')].find((el) => el.getBoundingClientRect().width > 0);
     const v = window.visualViewport;
     const g = pg && pg.g;
+    const rec = store.get('bf.rec', { t: 0, n: 0, noauto: false });
     return [
       '창 ' + window.innerWidth + '×' + window.innerHeight + ' · 보이는 영역 ' + (v ? Math.round(v.width) + '×' + Math.round(v.height) + ' 배율 ' + v.scale : '-'),
       '화면 ' + screen.width + '×' + screen.height + ' · DPR ' + window.devicePixelRatio,
@@ -1605,6 +1737,12 @@
       '안전영역 위/오른/아래/왼 ' + (g ? [g.si.top, g.si.right, g.si.bottom, g.si.left].map(Math.round).join('/') : '-') + ' · 머리줄 아래 ' + (document.querySelector('.head-row') ? Math.round(document.querySelector('.head-row').getBoundingClientRect().bottom) : '-') + ' · 본문 시작 ' + (g ? g.padTop : '-'),
       '회전·접기 ' + rotCount + '번(다시 만듦 ' + rotRebuilt + ')' + (rotLast ? ' · 마지막: ' + rotLast : ''),
       '배율 ' + (v ? v.scale.toFixed(2) : '-') + ' · 보이는 영역 ' + (v ? Math.round(v.width) + '×' + Math.round(v.height) : '-') + ' · innerWidth ' + window.innerWidth + '×' + window.innerHeight + ' · 문서 폭 ' + document.documentElement.scrollWidth + ' · 기기 ' + screen.width + '×' + screen.height + ' · 배율 바로잡기 ' + kickTotal + '번',
+      '지금 단위 ' + unitProbe() + ' · 문서 ' + document.documentElement.clientWidth + '×' + document.documentElement.clientHeight +
+        ' · 바깥 ' + window.outerWidth + '×' + window.outerHeight + ' · 쓸 수 있는 화면 ' + screen.availWidth + '×' + screen.availHeight +
+        ' · 방향 ' + (screen.orientation ? screen.orientation.type + ' ' + screen.orientation.angle + '°' : '-'),
+      '터치 최대 ' + touchMax.x + ',' + touchMax.y + ' · 앱이 아는 화면 밖 ' + touchOut + '번' + (touchLast ? ' (마지막 ' + touchLast + ')' : ''),
+      '어긋남 복구 ' + (recLog.length ? recLog.join(' / ') : '없음') + (rec.t ? ' · 앱 다시 시작 ' + (rec.n || 0) + '번' + (rec.noauto ? '(자동 끔)' : '') : ''),
+      '<b>최근 화면 기록</b> (오래된 것부터)<br>' + (snaps.length ? snaps.map((x) => '· ' + x).join('<br>') : '-'),
     ].join('<br>');
   }
 
@@ -1682,6 +1820,8 @@
       '<div class="adv-head">화면 정보</div>' +
       '<p class="note tight">현재 화면 ' + g.W + ' × ' + g.H + ' px (창 ' + window.innerWidth + ' × ' + window.innerHeight + ') · ' + (g.spread ? '펼침(두 쪽)' : '한 쪽') +
       ' (자동 기준: 폭 ' + AUTO_SPREAD_MIN_WIDTH + 'px 이상, 또는 가로 화면이면 ' + AUTO_SPREAD_MIN_LANDSCAPE + 'px 이상)<br>안전영역 위 ' + g.si.top + ' · 아래 ' + g.si.bottom + ' · 좌 ' + g.si.left + ' · 우 ' + g.si.right + '</p>' +
+      '<div class="row"><span>화면이 위로 올라가거나 작게 보일 때 <small class="sub">값을 새로 읽고 책을 다시 만듭니다</small></span><button class="seg-btn" id="adv-refit" type="button">다시 맞추기</button></div>' +
+      '<div class="row"><span>앱 다시 시작 <small class="sub">읽던 위치는 그대로 · 안 고쳐지면 이걸로</small></span><button class="seg-btn" id="adv-restart" type="button">다시 시작</button></div>' +
       '<p class="note diag"><b>화면 진단</b><br>' + diagText() + '</p>';
     const LIMITS = { topSpread: [TOP_MIN_SPREAD, TOP_MAX], topSingle: [TOP_MIN_SINGLE, TOP_MAX], shiftX: [0, 160], bottomSpread: [0, 80] };
     sheetBody.querySelectorAll('[data-adv]').forEach((b) => b.addEventListener('click', () => {
@@ -1690,6 +1830,8 @@
       if (next !== cur) changeSettings({ [key]: next }, showAdvanced);
     }));
     $('#go-bk').addEventListener('click', () => { showBackup(); sheetBody.scrollTop = 0; });
+    $('#adv-refit').addEventListener('click', () => { closeSheet(); refitScreen(); });
+    $('#adv-restart').addEventListener('click', () => restartApp('직접', false));
     // 되돌리기 = 저장한 값을 지워 기기에 맞는 자동값으로 돌아간다. (듀오는 예전 기본값 그대로)
     $('#adv-reset').addEventListener('click', () => changeSettings(
       geometry().duo
