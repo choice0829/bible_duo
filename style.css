@@ -56,6 +56,10 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
   touch-action: none;
 }
 #stage .stf__parent { width: 100%; }
+/* 화면을 돌리면 그 방향용으로 만들어 둔 낡은 책을 CSS가 즉시 숨긴다(자바스크립트가 다시 만들기 전까지).
+   폭이 넓은 책이 좁은 세로 화면에 남아 있으면 아이폰이 '화면에 맞춰 축소'해 버려 가로로 돌아와도 작은 채로 남기 때문이다. */
+@media (orientation: portrait)  { #stage[data-o="landscape"] { display: none; } }
+@media (orientation: landscape) { #stage[data-o="portrait"]  { display: none; } }
 
 .page { background: var(--bg); overflow: hidden; overflow: clip; }   /* clip: 코드로도 스크롤되지 않는다 */
 /* 본문 상자: 좌우 여백(padx)을 padding으로 둔다. 글이 놓이는 폭은 예전과 같고(쪽 나누기 그대로),

@@ -196,6 +196,7 @@
     if (meta && bg) meta.setAttribute('content', bg);
     stage.style.width = g.bookW + 'px';
     stage.style.height = g.H + 'px';
+    stage.dataset.o = g.H >= g.W ? 'portrait' : 'landscape';   // CSS가 돌리는 순간 낡은 무대를 바로 숨기는 데 쓴다
     stage.style.marginLeft = g.shiftX ? g.shiftX + 'px' : '';   // 펼친 화면 가운데 맞춤
     root.setProperty('--shiftx', g.shiftX + 'px');
     // 머리줄(책 이름·메뉴)의 왼쪽 끝: 펼침은 책 왼쪽 가장자리 + 14, 한 쪽은 안전영역 + 14. (좌우가 같은 아이폰은 책 자체가 이미 안쪽이다)
@@ -717,6 +718,7 @@
     try { const ui = f && f.getUI && f.getUI(); if (ui && ui.removeHandlers) ui.removeHandlers(); } catch (e) { /* 무시 */ }
   }
   function killFlip() {
+    resetGestures();
     if (!flip) return;
     detachFlipResize(flip);
     try { flip.destroy(); } catch (e) { /* 무시 */ }
@@ -1119,6 +1121,12 @@
   // 좌우로 끌면 끄는 방향대로(왼쪽으로 = 다음, 오른쪽으로 = 이전) 책장이 따라온다.
   const FWD = 0, BACK = 1;
   let down = null, pressTimer = null, drag = null, selPt = null, selRaf = 0;
+  // 책을 다시 만들 때(회전·접기 등) 진행 중이던 끌기·넘김 상태를 모두 버린다.
+  // 안 버리면 새 책에 낡은 끌기 값이 전달되어 책장이 모서리에서 접힌 채 멈추기도 한다.
+  function resetGestures() {
+    clearTimeout(pressTimer);
+    down = null; drag = null; turning = false;
+  }
 
   // 탭·키보드로 넘길 때도 '끌기'와 똑같은 모양이 되도록, 가상 손가락을 움직여 책장을 넘긴다.
   // (라이브러리 기본 넘김 애니메이션은 한 쪽 화면에서 앞쪽으로 넘길 때 효과가 거의 보이지 않는다)
@@ -1129,7 +1137,7 @@
       goChapter(dir > 0 ? 1 : -1);
       return;
     }
-    if (!flip || turning || flip.getState() !== 'read') return;
+    if (!flip || turning || building || settleStart || flip.getState() !== 'read') return;
     const r = stage.getBoundingClientRect();
     const portrait = flip.getOrientation() === 'portrait';
     const D = dir > 0 ? FWD : BACK;
@@ -1138,9 +1146,10 @@
     const x1 = D === FWD ? (portrait ? -r.width * 0.05 : 1) : r.width - 1;
     const ms = window.TURN_MS || TURN_MS;
     turning = true;
+    const f = flip;   // 애니메이션 도중 책이 다시 만들어지면(회전 등) 새 책에는 손대지 않는다
     try {
-      flip.startUserTouch({ x: -9999, y: -9999 });
-      flip.userMove({ x: x0, y: edge }, true);      // 방향·모서리 결정
+      f.startUserTouch({ x: -9999, y: -9999 });
+      f.userMove({ x: x0, y: edge }, true);      // 방향·모서리 결정
     } catch (err) { turning = false; return; }
     const t0 = performance.now();
     const pt = (k) => {
@@ -1148,10 +1157,11 @@
       return { x: x0 + (x1 - x0) * e, y: edge - r.height * 0.1 * Math.sin(Math.PI * k) };
     };
     const step = (now) => {
+      if (f !== flip) { turning = false; return; }
       const k = Math.min(1, (now - t0) / ms);
-      try { flip.userMove(pt(k), true); } catch (err) { /* 무시 */ }
+      try { f.userMove(pt(k), true); } catch (err) { /* 무시 */ }
       if (k < 1) { requestAnimationFrame(step); return; }
-      try { flip.userStop(pt(1), false); } catch (err) { /* 무시 */ }
+      try { f.userStop(pt(1), false); } catch (err) { /* 무시 */ }
       setTimeout(() => { turning = false; }, 300);
     };
     requestAnimationFrame(step);
@@ -1180,7 +1190,7 @@
 
   stage.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
-    if (turning || (flip && flip.getState() !== 'read')) return;
+    if (turning || building || settleStart || (flip && flip.getState() !== 'read')) return;   // 책을 다시 만드는 중에는 손가락을 받지 않는다
     if (!scroller) { try { stage.setPointerCapture(e.pointerId); } catch (err) { /* 무시 */ } }
     down = { x: e.clientX, y: e.clientY, t: performance.now() };
     drag = null;
@@ -1195,6 +1205,7 @@
     }, 480);
   });
   stage.addEventListener('pointermove', (e) => {
+    if (building || settleStart) return;
     if (selecting) {   // 화면 한 번 그릴 때마다 한 번만 계산한다 (손가락이 빨라도 버벅이지 않게)
       selPt = { x: e.clientX, y: e.clientY };
       if (!selRaf) selRaf = requestAnimationFrame(() => { selRaf = 0; if (selecting && selPt) guard(() => extendSelect(selPt.x, selPt.y)); });
@@ -1288,6 +1299,7 @@
   let posFreezeUntil = 0;       // 이 시각까지는 스크롤로 읽던 위치를 바꾸지 않는다
   let verifyTimers = [], verifyTries = 0;
   let rotCount = 0, rotRebuilt = 0, rotLast = '';
+  let scaleKicks = 0;
   const posFrozen = () => Date.now() < posFreezeUntil;
 
   function onResize() {
@@ -1309,7 +1321,19 @@
     const g = geometry(), key = geoKey(g);
     if (key === settleKey) settleSame++; else { settleKey = key; settleSame = 0; }
     const waited = Date.now() - settleStart;
-    if (settleSame >= 2 || waited > 3000) {   // 같은 값이 연달아 읽히면(약 0.25초) 안정된 것으로 본다
+    let orientOk = true;
+    try { orientOk = !window.matchMedia || window.matchMedia('(orientation: portrait)').matches === (g.H >= g.W); } catch (e) { /* 무시 */ }
+    if (settleSame >= 2 && orientOk && waited < 6000 && scaleOff() && scaleKicks < 3) {
+      // 값은 안정됐는데 화면 배율이 1이 아니다 → 배율을 바로잡고 처음부터 다시 기다린다
+      scaleKicks++;
+      rotLast = '배율 ' + (window.visualViewport.scale).toFixed(2) + ' → 바로잡기 ' + scaleKicks + '회';
+      kickViewport(true);
+      settleKey = ''; settleSame = 0;
+      settleTimer = setTimeout(settleTick, 500);
+      return;
+    }
+    if ((settleSame >= 2 && orientOk) || waited > 3000) {   // 같은 값이 연달아 읽히면(약 0.25초) 안정된 것으로 본다
+      if (!scaleOff()) scaleKicks = 0;
       const target = rotPos || pos, n = settleSame, w = waited;
       settleStart = 0; rotPos = null;
       rotCount++;
@@ -1346,6 +1370,7 @@
         if (!near(rc.top, 0) || !near(rc.height, g.pageH) || !near(rc.pageWidth, g.pageW)) out.push('책 ' + Math.round(rc.left) + ',' + Math.round(rc.top) + ' ' + Math.round(rc.pageWidth) + '×' + Math.round(rc.height));
       } catch (e) { /* 무시 */ }
     }
+    if (scaleOff()) out.push('화면 배율 ' + window.visualViewport.scale.toFixed(2));
     const hr = document.querySelector('.head-row');
     if (hr) {
       const r = hr.getBoundingClientRect();
@@ -1361,6 +1386,7 @@
       if (!why) return;
       healLast = '배치 어긋남: ' + why;
       healCount++;
+      if (scaleOff()) kickViewport(true);
       if (verifyTries++ < 3) { rotRebuilt++; rotLast = healLast; verifying = true; rebuild(pos); }
     }, ms));
   }
@@ -1413,16 +1439,21 @@
       rebuild(pos);
     }
   }
-  // 아이폰은 회전한 뒤 화면 배율이 1이 아닌 채로 남기도 한다. 배율을 1로 고정하는 값을 잠깐 넣었다가 되돌려 바로잡는다.
-  let kickAt = 0;
-  function kickViewport() {
-    if (Date.now() - kickAt < 4000) return;
-    kickAt = Date.now();
-    const m = document.querySelector('meta[name="viewport"]');
-    if (!m) return;
-    const base = m.getAttribute('content') || '';
-    m.setAttribute('content', base + ', minimum-scale=1, maximum-scale=1');
-    setTimeout(() => m.setAttribute('content', base), 400);
+  // 아이폰은 회전한 뒤 화면 배율이 1이 아닌 채(축소된 채) 남기도 한다. 폭이 넓은 내용(펼친 화면의 책)이 세로 화면에 남아 있는 순간
+  // '화면에 맞춰 축소'가 일어나고, 가로로 돌아와도 그 배율이 풀리지 않는 경우다. 배율을 1로 못 박은 viewport 태그로 갈아 끼워 바로잡는다.
+  const VIEWPORT_LOCK = 'width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, shrink-to-fit=no, viewport-fit=cover';
+  let kickAt = 0, kickTotal = 0;
+  const scaleOff = () => { const v = window.visualViewport; return !!v && Math.abs(v.scale - 1) > 0.02; };
+  function kickViewport(force) {
+    if (Date.now() - kickAt < (force ? 300 : 1500) || kickTotal >= 40) return false;
+    kickAt = Date.now(); kickTotal++;
+    const old = document.querySelector('meta[name="viewport"]');
+    if (!old || !old.parentNode) return false;
+    const m = document.createElement('meta');
+    m.setAttribute('name', 'viewport');
+    m.setAttribute('content', VIEWPORT_LOCK);
+    old.parentNode.replaceChild(m, old);
+    return true;
   }
   let healRaf = 0;
   const healSoon = () => { if (!healRaf) healRaf = requestAnimationFrame(() => { healRaf = 0; heal(); }); };
@@ -1436,7 +1467,19 @@
     if (!bible || !pg || building || settleStart) return;
     if (geoKey(geometry()) !== lastGeo) onResize();
   }
-  setInterval(() => { if (!document.hidden) { heal(); lateGeoCheck(); } }, 1500);
+  // 손가락 없이 책장이 접히거나 넘어가는 도중(read가 아닌 상태)에 3초 넘게 멈춰 있으면 책을 다시 만든다
+  let stuckTicks = 0;
+  function flipStuckCheck() {
+    if (!flip || building || settleStart || drag || turning || down) { stuckTicks = 0; return; }
+    let st = 'read';
+    try { st = flip.getState(); } catch (e) { /* 무시 */ }
+    if (st === 'read') { stuckTicks = 0; return; }
+    if (++stuckTicks >= 2) {
+      stuckTicks = 0; healCount++; healLast = '책장이 중간에 멈춤(' + st + ')';
+      rebuild(pos);
+    }
+  }
+  setInterval(() => { if (!document.hidden) { heal(); lateGeoCheck(); flipStuckCheck(); } }, 1500);
   // 위쪽 메뉴줄·도구 상자를 끌어도 문서 전체가 끌려 움직이지 않게 막는다
   ['#topbar', '#ann-bar'].forEach((q) => $(q).addEventListener('touchmove', (e) => { if (e.cancelable) e.preventDefault(); }, { passive: false }));
 
@@ -1561,6 +1604,7 @@
       '밀림 바로잡음 ' + healCount + '번' + (healLast ? ' (마지막: ' + healLast + ')' : '') + ' · 스크롤 ' + Math.round(window.scrollY) + ' · 보이는 영역 위 ' + (v ? Math.round(v.offsetTop) : '-'),
       '안전영역 위/오른/아래/왼 ' + (g ? [g.si.top, g.si.right, g.si.bottom, g.si.left].map(Math.round).join('/') : '-') + ' · 머리줄 아래 ' + (document.querySelector('.head-row') ? Math.round(document.querySelector('.head-row').getBoundingClientRect().bottom) : '-') + ' · 본문 시작 ' + (g ? g.padTop : '-'),
       '회전·접기 ' + rotCount + '번(다시 만듦 ' + rotRebuilt + ')' + (rotLast ? ' · 마지막: ' + rotLast : ''),
+      '배율 ' + (v ? v.scale.toFixed(2) : '-') + ' · 보이는 영역 ' + (v ? Math.round(v.width) + '×' + Math.round(v.height) : '-') + ' · innerWidth ' + window.innerWidth + '×' + window.innerHeight + ' · 문서 폭 ' + document.documentElement.scrollWidth + ' · 기기 ' + screen.width + '×' + screen.height + ' · 배율 바로잡기 ' + kickTotal + '번',
     ].join('<br>');
   }
 
