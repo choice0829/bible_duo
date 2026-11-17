@@ -52,7 +52,7 @@
   // 처음 설치한 기기는 여백 값을 저장하지 않는다 → 화면 크기·안전영역에 맞춰 자동으로 정해진다 (geometry의 auto).
   // 고급설정에서 직접 바꾼 값만 저장되고, 그 값이 자동값보다 우선한다.
   const freshInstall = (() => { try { return localStorage.getItem('bf.settings') === null; } catch (e) { return true; } })();
-  let settings = store.get('bf.settings', { fontSize: 18, theme: 'paper', layout: 'auto', font: 'myeongjo' });
+  let settings = store.get('bf.settings', { fontSize: 18, theme: 'paper', layout: 'auto', font: 'myeongjo', std: false });
   // 이전 버전에서 저장된 펼침 여백(윗 144 · 아래 8 등)을 새 기본값(96 · 52 · 20)으로 한 번만 바꾼다.
   // 이후에는 고급설정에서 바꾼 값이 그대로 유지된다. (처음 설치한 기기는 해당 없음)
   if (settings.marginRev !== MARGIN_REV) {
@@ -454,11 +454,51 @@
     try { localStorage.setItem('bf.hl.old', JSON.stringify(old)); localStorage.removeItem('bf.hl'); } catch (e) { /* 무시 */ }
   }
 
+  // ---------- 쉬운 말 풀이 ----------
+  // 개역한글 본문을 현대 표준어로 풀어 쓴 글(참고용). 책마다 data/std/<책>.json에 장·절별로 들어 있고, 있는 곳만 보여 준다.
+  // 형식: { id, v(고친 횟수), c: { "1": { "1": "문장", ... } } }  /  준비된 곳 목록: data/std/index.json = { v, books: { gen: [1, 2] } }
+  const stdBooks = {};          // 책 id → 불러온 내용(없으면 null)
+  let stdIndex = null;
+  const stdToasted = {};
+  async function loadStd(id) {
+    if (id in stdBooks) return stdBooks[id];
+    let d = null;
+    const idx = await loadStdIndex();
+    if (!idx.books[id]) { stdBooks[id] = null; return null; }   // 목록에 없는 책은 요청하지 않는다 (없는 파일을 찾느라 지연·오류가 생기지 않게)
+    try {
+      const r = await fetch('data/std/' + id + '.json', { cache: 'no-cache' });
+      if (r.ok) d = await r.json();
+    } catch (e) { d = null; }
+    stdBooks[id] = d && d.c && typeof d.c === 'object' ? d : null;
+    return stdBooks[id];
+  }
+  async function loadStdIndex() {
+    if (stdIndex) return stdIndex;
+    try {
+      const r = await fetch('data/std/index.json', { cache: 'no-cache' });
+      stdIndex = r.ok ? await r.json() : { books: {} };
+    } catch (e) { stdIndex = { books: {} }; }
+    if (!stdIndex || typeof stdIndex.books !== 'object' || !stdIndex.books) stdIndex = { books: {} };
+    return stdIndex;
+  }
+  function stdFor(bookId, c, n) {   // c: 0부터 시작하는 장 번호
+    const b = stdBooks[bookId];
+    const ch = b && b.c && b.c[String(c + 1)];
+    const t = ch && ch[String(n)];
+    return typeof t === 'string' ? t.trim() : '';
+  }
+  // 쉬운 말 문단에도 설교노트 번호를 달아 두면 스포트라이트(노트 본문만 밝게)가 같이 따라온다
+  function stdNoteAttr(bookId, k) {
+    const ids = noteIdsAt(bookId, k);
+    return ids ? ' data-n="' + ids.join(' ') + '"' : '';
+  }
+
   // ---------- 본문 → 조각(unit) ----------
-  // 조각 종류: 0 = 장 제목, 1 = 절 번호, 2 = 낱말
+  // 조각 종류: 0 = 장 제목, 1 = 절 번호, 2 = 낱말, 3 = 쉬운 말 풀이의 낱말(절 아래 작은 글씨)
   // K[i] = 그 조각이 속한 절의 표식(장 번호 × 1000 + 절 번호). 이동 후 절 강조에 쓴다.
   function buildUnits(bookIndex) {
     const book = bible.books[bookIndex];
+    const sb = settings.std ? stdBooks[book.id] : null;   // 쉬운 말 풀이(켜 둔 경우만)
     const unitName = book.id === 'psa' ? '편' : '장';
     const T = [], H = [], K = [], W = [], O = [];   // W: 낱말 원문, O: 그 낱말이 절 본문에서 시작하는 글자 위치
     const chapterStart = [], verseAt = [];
@@ -475,10 +515,12 @@
         const words = v.t.split(' ');
         let off = 0;
         words.forEach((w) => { T.push(2); K.push(key); H.push(esc(w) + ' '); W.push(w); O.push(off); off += w.length + 1; });
+        const st = sb ? stdFor(book.id, c, v.n) : '';
+        if (st) st.split(/\s+/).filter(Boolean).forEach((w) => { T.push(3); K.push(key); H.push(esc(w) + ' '); W.push(w); O.push(-1); });   // 3 = 쉬운 말 낱말
       });
       verseAt.push(va);
     });
-    return { T, H, K, W, O, chapterStart, verseAt, unitName, bookIndex, bookId: book.id };
+    return { T, H, K, W, O, chapterStart, verseAt, unitName, bookIndex, bookId: book.id, stdVer: sb ? String(sb.v || 1) : '' };
   }
 
   // 절마다 새 문단(<p>)으로 시작한다. 쪽이 절 중간에서 시작하면 이어지는 문단으로 연다.
@@ -487,6 +529,11 @@
     let out = '', cur = null;
     const close = () => {
       if (!cur) return;
+      if (cur.std) {   // 쉬운 말 문단: 낱말 선택·하이라이트 대상이 아니므로 data-k 대신 data-s를 단다
+        out += '<p class="std" data-s="' + cur.k + '"' + stdNoteAttr(u.bookId, cur.k) + '>' + esc(cur.raw.trim()) + '</p>';
+        cur = null;
+        return;
+      }
       const o = Math.max(cur.off, 0);
       out += '<p data-k="' + cur.k + '" data-o="' + o + '" data-e="' + (o + cur.raw.length) + '"' + (cur.head ? ' data-h="1"' : '') + noteAttrs(u.bookId, cur.k) + '>' +
         cur.head + annotate(u.bookId, cur.k, o, cur.raw) + '</p>';
@@ -496,6 +543,11 @@
       const t = u.T[i];
       if (t === 0) { close(); out += u.H[i]; continue; }
       if (t === 1) { close(); cur = { k: u.K[i], head: u.H[i], off: -1, raw: '' }; continue; }   // 절 번호 = 새 줄
+      if (t === 3) {
+        if (!cur || !cur.std) { close(); cur = { k: u.K[i], std: true, raw: '' }; }
+        cur.raw += u.W[i] + ' ';
+        continue;
+      }
       if (!cur) cur = { k: u.K[i], head: '', off: -1, raw: '' };
       if (cur.off < 0) cur.off = u.O[i];
       cur.raw += u.W[i] + ' ';
@@ -513,7 +565,7 @@
   function pgcKey(u, g) {
     const cs = getComputedStyle(measure);
     return ['2', bible.version || '', u.bookId, u.T.length, g.textW, g.textH, settings.fontSize, settings.font,
-      cs.fontFamily, cs.lineHeight, cs.letterSpacing, cs.wordSpacing, navigator.userAgent].join('|');
+      cs.fontFamily, cs.lineHeight, cs.letterSpacing, cs.wordSpacing, navigator.userAgent].concat(u.stdVer ? ['s' + u.stdVer] : []).join('|');
   }
   function pgcLoad(key) {
     try {
@@ -582,7 +634,7 @@
       }
       let k = lo;
       // 쪽 끝에 장 제목이나 절 번호만 덩그러니 남지 않게 앞으로 물린다
-      while (k > 1 && u.T[i + k - 1] !== 2) k--;
+      while (k > 1 && u.T[i + k - 1] < 2) k--;
       i += k;
       guess = k;
       if (starts.length % 10 === 0) {
@@ -677,6 +729,12 @@
     const gen = ++generation;
     showLoading(true);
     await tick();
+    if (settings.std && bible.books[target.book]) {   // 쉬운 말 풀이를 켜 둔 경우, 이 책의 풀이를 먼저 불러온다
+      const bid = bible.books[target.book].id;
+      const sd = await loadStd(bid);
+      if (gen !== generation) return;
+      if (!sd && !stdToasted[bid]) { stdToasted[bid] = true; setTimeout(() => showToastLine('이 책은 쉬운 말 풀이가 아직 준비되지 않았습니다'), 400); }
+    }
     const g = geometry();
     lastGeo = [g.W, g.H, g.si.top, g.si.bottom, g.si.left, g.si.right].join('x');
     if (!launchSnapped) { launchSnapped = true; takeSnap('시작', g); afterRestartCheck(g); }
@@ -737,6 +795,8 @@
     book.chapters[c].forEach((v) => {
       const k = c * 1000 + v.n;
       h += '<p data-k="' + k + '" data-o="0" data-e="' + v.t.length + '" data-h="1"' + noteAttrs(book.id, k) + '><sup class="vn">' + v.n + '</sup>' + annotate(book.id, k, 0, v.t) + '</p>';
+      const st = settings.std ? stdFor(book.id, c, v.n) : '';
+      if (st) h += '<p class="std" data-s="' + k + '"' + stdNoteAttr(book.id, k) + '>' + esc(st) + '</p>';
     });
     const bi = bible.books.indexOf(book);
     const prev = c > 0 ? '‹ ' + c + unit : (bi > 0 ? '‹ ' + bible.books[bi - 1].name : '');
@@ -1786,6 +1846,53 @@
     settingsTimer = setTimeout(() => rebuild(pos), 250);
   }
 
+  // ---------- 쉬운 말 보기: 본문 아래에 표준어 풀이를 함께 보여 준다 ----------
+  const easyBtn = $('#btn-easy');
+  const syncEasyBtn = () => { easyBtn.classList.toggle('on', !!settings.std); easyBtn.setAttribute('aria-pressed', settings.std ? 'true' : 'false'); };
+  syncEasyBtn();
+  // [1,2,3,5,6] → '1–3, 5–6'
+  function rangeText(list) {
+    const a = list.slice().sort((x, y) => x - y), out = [];
+    for (let i = 0; i < a.length;) {
+      let j = i;
+      while (j + 1 < a.length && a[j + 1] === a[j] + 1) j++;
+      out.push(j > i ? a[i] + '–' + a[j] : String(a[i]));
+      i = j + 1;
+    }
+    return out.join(', ');
+  }
+  function showEasy() {
+    sheetTitle.textContent = '쉬운 말 보기';
+    setSheetAct(null);
+    backBtn.hidden = true;
+    sheetBack = null;
+    sheetBody.innerHTML =
+      '<label class="row chk"><span>본문 아래에 쉬운 말 함께 보기<small class="sub">개역한글 아래에 표준어 풀이를 작은 글씨로 보여 줍니다</small></span>' +
+      '<input type="checkbox" id="opt-easy"' + (settings.std ? ' checked' : '') + '><i class="sw" aria-hidden="true"></i></label>' +
+      '<div class="easy-eg typo"><div class="eg-h">보기 (창세기 1장 1절)</div>' +
+      '<p><sup class="vn">1</sup>태초에 하나님이 천지를 창조하시니라</p>' +
+      '<p class="std">태초에 하나님이 하늘과 땅을 창조하셨다.</p></div>' +
+      '<p class="note">※ 이 풀이는 개역한글의 뜻을 현대 표준어로 옮겨 쓴 <b>참고용 글</b>입니다. 공식 번역본이 아니며, 본문과 조금 다르게 읽힐 수 있으니 정확한 뜻은 개역한글 본문과 함께 확인해 주세요. 설교나 가르침에 쓰기 전에는 목회자·전문가의 검토를 권합니다.</p>' +
+      '<div class="adv-head">준비된 곳</div><p class="note tight" id="easy-ready">불러오는 중…</p>';
+    $('#opt-easy').addEventListener('change', (e) => {
+      settings = Object.assign({}, settings, { std: !!e.target.checked });
+      store.set('bf.settings', settings);
+      syncEasyBtn();
+      closeSheet();
+      rebuild(pos);   // 읽던 위치는 그대로 두고 다시 만든다
+    });
+    loadStdIndex().then((idx) => {
+      const box = document.getElementById('easy-ready');
+      if (!box) return;
+      const lines = [];
+      bible.books.forEach((b) => {
+        const chs = idx.books[b.id];
+        if (Array.isArray(chs) && chs.length) lines.push('<b>' + esc(b.name) + '</b> ' + rangeText(chs) + (b.id === 'psa' ? '편' : '장'));
+      });
+      box.innerHTML = lines.length ? lines.join('<br>') + '<br><span class="sub">앞으로 더 늘려 갑니다. 풀이가 없는 곳은 개역한글만 보입니다.</span>' : '아직 준비된 곳이 없습니다.';
+    });
+  }
+
   function showSettings() {
     sheetTitle.textContent = '읽기 설정';
     setSheetAct(null);
@@ -1873,7 +1980,7 @@
     return JSON.stringify({
       app: 'bibleflip', ver: 1, savedAt: new Date().toISOString(),
       pos, tool, anns, notes: notesDB.items,
-      settings: { fontSize: settings.fontSize, theme: settings.theme, font: settings.font, layout: settings.layout },
+      settings: { fontSize: settings.fontSize, theme: settings.theme, font: settings.font, layout: settings.layout, std: !!settings.std },
     });
   }
   // 붙여 넣은 글을 검사해서 쓸 수 있는 것만 골라 적용한다. 잘못된 내용이면 오류를 던진다.
@@ -1920,8 +2027,10 @@
     if (THEMES[s.theme]) patch.theme = s.theme;
     if (FONTS[s.font]) patch.font = s.font;
     if (LAYOUTS[s.layout]) patch.layout = s.layout;
+    if (typeof s.std === 'boolean') patch.std = s.std;
     settings = Object.assign({}, settings, patch);
     store.set('bf.settings', settings);
+    syncEasyBtn();
     return { verses, marks, notes: notes ? notes.length : null };
   }
   // 백업에서 읽은 노트를 검사해 쓸 수 있는 것만 남긴다
@@ -2115,8 +2224,8 @@
     noteIdx = null;
     if (!pg || !bible || !bible.books[pg.bookIndex]) return;
     const bid = bible.books[pg.bookIndex].id;
-    stage.querySelectorAll('p[data-k]').forEach((p) => {
-      const ids = noteIdsAt(bid, +p.dataset.k);
+    stage.querySelectorAll('p[data-k], p[data-s]').forEach((p) => {
+      const ids = noteIdsAt(bid, +(p.dataset.k || p.dataset.s));
       if (ids) {
         p.classList.add('nt');
         p.dataset.n = ids.join(' ');
@@ -2235,7 +2344,8 @@
     if (!spotStyleEl) { spotStyleEl = document.createElement('style'); document.head.appendChild(spotStyleEl); }
     if (!peekEl) buildPeek();
     spot.id = id;
-    spotStyleEl.textContent = '#stage.spot p[data-n~="' + id.replace(/[^\w-]/g, '') + '"][data-k] { opacity: 1; }';
+    const sid = id.replace(/[^\w-]/g, '');
+    spotStyleEl.textContent = '#stage.spot p[data-n~="' + sid + '"][data-k], #stage.spot p[data-n~="' + sid + '"][data-s] { opacity: 1; }';
     stage.classList.add('spot');
     tabsEl.classList.add('spot');
     tabsEl.querySelectorAll('.nt-tab').forEach((t) => t.classList.toggle('sel', t.dataset.note === id));
@@ -2718,6 +2828,7 @@
     btn.addEventListener('click', run);
   }
   onMenu($('#btn-pick'), () => { showBooks(pos.book >= 39 ? 'nt' : 'ot'); openSheet(false); });
+  onMenu($('#btn-easy'), () => { showEasy(); openSheet(false); });
   onMenu($('#btn-settings'), () => { showSettings(); openSheet(false); });
   onMenu($('#btn-hl'), () => { showHighlights(); openSheet(false); });
   onMenu($('#btn-notes'), () => { showNotes(); openSheet(true); });
