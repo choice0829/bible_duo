@@ -51,10 +51,29 @@ html, body {
 body { position: fixed; top: 0; right: 0; bottom: 0; left: 0; width: 100%; }   /* 문서 자체가 끌려 움직이지 않게 고정 */
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 
+/* ---------- 책상(상단 배경): 책은 책상 위에 놓인 카드처럼 보인다 ---------- */
+:root { --desk: #DCD4C2; --glow: rgba(255,255,255,.34); --btn: rgba(255,255,255,.55); --lift: rgba(60,40,10,.24); }
+body.theme-sepia { --desk: #CDBA90; --glow: rgba(255,248,225,.34); --btn: rgba(255,255,255,.42); --lift: rgba(70,45,10,.28); }
+body.theme-night { --desk: #0A0B0D; --glow: rgba(255,255,255,.055); --btn: rgba(255,255,255,.09); --lift: rgba(0,0,0,.7); }
+body { background-color: var(--desk); background-image: radial-gradient(130% 62% at 50% 0%, var(--glow), transparent 72%); }
+body.desk-linen { background-image: radial-gradient(130% 62% at 50% 0%, var(--glow), transparent 72%), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85 .85' numOctaves='2' seed='4' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.3 0 0 0 0 0.19 0 0 0 0 0.07 0.8 0 0 0 -0.17'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url%28%23n%29'/%3E%3C/svg%3E"); }
+body.theme-night.desk-linen { background-image: radial-gradient(130% 62% at 50% 0%, var(--glow), transparent 72%), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85 .85' numOctaves='2' seed='4' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.95 0 0 0 0 0.93 0 0 0 0 0.9 0.26 0 0 0 -0.04'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url%28%23n%29'/%3E%3C/svg%3E"); }
+body.desk-wood { background-image: radial-gradient(130% 62% at 50% 0%, var(--glow), transparent 72%), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.005 .11' numOctaves='4' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.3 0 0 0 0 0.19 0 0 0 0 0.07 1.05 0 0 0 -0.33'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url%28%23n%29'/%3E%3C/svg%3E"); }
+body.theme-night.desk-wood { background-image: radial-gradient(130% 62% at 50% 0%, var(--glow), transparent 72%), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.005 .11' numOctaves='4' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.95 0 0 0 0 0.93 0 0 0 0 0.9 0.42 0 0 0 -0.13'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url%28%23n%29'/%3E%3C/svg%3E"); }
+body.desk-leather { background-image: radial-gradient(130% 62% at 50% 0%, var(--glow), transparent 72%), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.55' numOctaves='3' seed='11' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.3 0 0 0 0 0.19 0 0 0 0 0.07 1.5 0 0 0 -0.52'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url%28%23n%29'/%3E%3C/svg%3E"); }
+body.theme-night.desk-leather { background-image: radial-gradient(130% 62% at 50% 0%, var(--glow), transparent 72%), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.55' numOctaves='3' seed='11' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.95 0 0 0 0 0.93 0 0 0 0 0.9 0.55 0 0 0 -0.2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url%28%23n%29'/%3E%3C/svg%3E"); }
+/* 책 면: 둥근 윗모서리 + 책상 위로 살짝 뜬 그림자. (펼침: 책 영역, 접힘: 위아래로 읽는 장 영역) */
+#stage:not(.scroll), #book.scroll {
+  background: var(--bg); border-radius: 16px 16px 0 0;
+  box-shadow: 0 -3px 18px var(--lift), 0 0 0 1px var(--line);
+}
+
 /* ---------- 책 ---------- */
 #stage {
   position: fixed; top: 0; left: 0; right: 0; margin: 0 auto;
   touch-action: none;
+  /* 책장이 넘어갈 때 들린 모서리가 책 위쪽 가장자리(머리줄 아래)를 넘어 머리줄 위로 올라오지 않게 자른다 */
+  overflow: hidden; overflow: clip;
 }
 #stage .stf__parent { width: 100%; }
 /* 화면을 돌리면 그 방향용으로 만들어 둔 낡은 책을 CSS가 즉시 숨긴다(자바스크립트가 다시 만들기 전까지).
@@ -67,7 +86,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
    바깥쪽 여백 안에 설교노트 표시(.nt::before)를 그릴 수 있다. */
 .page .txt {
   position: absolute; overflow: hidden; overflow: clip;
-  left: 0; right: 0; padding: 0 var(--padx); top: var(--padtop); bottom: var(--padbottom);
+  left: 0; right: 0; padding: 0 var(--padx); top: var(--txttop, var(--padtop)); bottom: var(--padbottom);
 }
 
 /* 본문 글꼴 — 쪽 나누기(#measure)와 실제 쪽(.txt)이 똑같아야 한다 */
@@ -97,26 +116,25 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
   position: fixed; left: -99999px; top: 0; visibility: hidden; overflow: hidden;
 }
 
-/* ---------- 상단: 책 이름(크게) → 메뉴 → 본문. 왼쪽 정렬로 오른쪽 상단 상태 아이콘을 피한다 ---------- */
+/* ---------- 상단 머리줄: 책 이름은 왼쪽, 메뉴 5개는 오른쪽. 오른쪽 끝은 --headr(책 오른쪽 본문 끝, 상태 아이콘 자리는 피함) ---------- */
 #topbar { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 10; pointer-events: none; }
 #topbar button { pointer-events: auto; touch-action: manipulation; }
 .head-row {
-  position: absolute; top: var(--head-top); left: var(--headx, calc(env(safe-area-inset-left) + 14px)); pointer-events: none;
-  display: flex; flex-direction: column; align-items: flex-start; gap: 4px; max-width: calc(100% - 100px);
+  position: absolute; top: var(--head-top); left: var(--headx, calc(env(safe-area-inset-left) + 14px)); right: var(--headr, 14px); pointer-events: none;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
 }
-body.is-spread .head-row { flex-direction: row; align-items: center; gap: 18px; }
-.title-btn { display: flex; align-items: baseline; gap: 8px; min-width: 0; text-align: left; }
+body.is-spread .head-row { flex-direction: row; align-items: center; justify-content: space-between; gap: 18px; }
+.title-btn { display: flex; align-items: baseline; gap: 8px; min-width: 0; max-width: 100%; text-align: left; flex: 0 1 auto; }
 .title-btn b { font-size: var(--title-fs); font-weight: 800; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .title-btn span { font-size: calc(var(--title-fs) * .4); color: var(--muted); white-space: nowrap; }
-.menu-row { display: flex; gap: 7px; }
-/* 폭이 좁은 폰(세로): 오른쪽 상태 아이콘 자리를 따로 비울 필요가 없으니 책 이름이 거의 전체 폭을 쓴다 */
-@media (max-width: 440px) { .head-row { max-width: calc(100% - 28px); } }
+.menu-row { display: flex; gap: 7px; flex: none; margin-left: auto; }   /* 메뉴 5개는 오른쪽 끝 */
 /* 낮은 화면(가로로 돌린 폰): 머리줄을 작게 */
 body.is-compact .head-row { gap: 12px; }
 body.is-compact .menu-row { gap: 5px; }
 body.is-compact .mini-btn { height: 32px; }
 body.is-compact .icon-btn { width: 38px; height: 32px; }
 .mini-btn { font-size: 13px; color: var(--muted); white-space: nowrap; height: 34px; padding: 0 12px; border-radius: 9px; background: var(--chip); }
+.head-row .mini-btn { background: var(--btn); }   /* 책상 위의 단추 */
 /* 상단 메뉴 아이콘 (돋보기·톱니바퀴·책갈피). 선 색은 글자색을 따라간다 */
 .icon-btn { width: 42px; height: 36px; padding: 0; display: inline-flex; align-items: center; justify-content: center; color: var(--fg); }
 .icon-btn svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; opacity: .72; pointer-events: none; }

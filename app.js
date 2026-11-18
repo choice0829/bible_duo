@@ -25,6 +25,8 @@
   const SIDE_PAD = 8;   // 본문 좌우 여백(px). 더 줄이려면 숫자를 낮추세요
   const FONT_MIN = 14, FONT_MAX = 30;
   const THEMES = { paper: '종이', sepia: '세피아', night: '야간' };
+  const DESKS = { plain: '단색', linen: '린넨', wood: '나무결', leather: '가죽' };   // 책상(상단 배경) 질감
+  const DESK_DEFAULT = 'linen';
   const SYS_SERIF = '"AppleMyungjo","Noto Serif KR","Noto Serif CJK KR","Apple SD Gothic Neo",serif';
   const SYS_SANS = '"Apple SD Gothic Neo","Noto Sans KR","Noto Sans CJK KR",-apple-system,sans-serif';
   // 글씨체: face가 있는 것은 fonts/ 폴더의 글꼴 파일(앱에 포함, 오프라인 사용 가능)
@@ -52,7 +54,7 @@
   // 처음 설치한 기기는 여백 값을 저장하지 않는다 → 화면 크기·안전영역에 맞춰 자동으로 정해진다 (geometry의 auto).
   // 고급설정에서 직접 바꾼 값만 저장되고, 그 값이 자동값보다 우선한다.
   const freshInstall = (() => { try { return localStorage.getItem('bf.settings') === null; } catch (e) { return true; } })();
-  let settings = store.get('bf.settings', { fontSize: 18, theme: 'paper', layout: 'auto', font: 'myeongjo', std: false });
+  let settings = store.get('bf.settings', { fontSize: 18, theme: 'paper', layout: 'auto', font: 'myeongjo', std: false, desk: DESK_DEFAULT });
   // 이전 버전에서 저장된 펼침 여백(윗 144 · 아래 8 등)을 새 기본값(96 · 52 · 20)으로 한 번만 바꾼다.
   // 이후에는 고급설정에서 바꾼 값이 그대로 유지된다. (처음 설치한 기기는 해당 없음)
   if (settings.marginRev !== MARGIN_REV) {
@@ -113,6 +115,8 @@
   // 머리줄 크기: 접힘(한 쪽) = 책 이름 위 + 메뉴 아래(두 줄), 펼침 = 한 줄. 높이를 CSS와 같은 값으로 계산해 둔다.
   const HEAD_TOP_GAP = 4;    // 안전영역(상태 표시줄) 아래에서 머리줄까지
   const HEAD_BODY_GAP = 8;   // 머리줄 아래에서 본문 첫 줄까지 (최소)
+  const TXT_GAP = 10;        // 펼친 화면: 책(무대) 맨 위에서 본문 첫 줄까지. 책이 머리줄 아래에서 시작하므로 넘김 효과가 머리줄을 덮지 않는다
+  const HEAD_STAGE_GAP = 6;  // 펼친 화면: 머리줄 아래에서 책 위쪽 가장자리까지
   const MENU_H = 36, MENU_H_COMPACT = 32, HEAD_INNER_GAP = 4;
   function headBox(spread, compact) {
     const titleFs = compact ? 30 : 44, titleH = Math.ceil(titleFs * 1.2);
@@ -159,10 +163,18 @@
       Math.min(TOP_MAX, Math.round(topSetting) || (spread ? TOP_DEFAULT.topSpread : TOP_DEFAULT.topSingle))
     );
     const padBottom = spread ? eff.bottomSpread : si.bottom + 10;
+    // 펼친 화면: 책 자체를 머리줄 아래(본문 첫 줄 위 TXT_GAP)에서 시작시킨다. 본문 글자가 놓이는 화면 위치와 쪽 나누기(textH)는 그대로다.
+    // 한 쪽(접힘) 화면은 본문 스크롤 영역이 이미 머리줄 아래(--padtop)에서 시작한다.
+    const stageTop = spread ? Math.max(0, padTop - TXT_GAP) : 0;
+    const pageH = H - stageTop;
+    const txtTop = padTop - stageTop;
+    // 머리줄(책 이름·메뉴)의 오른쪽 끝: 책의 오른쪽 본문 끝에 맞추되, 오른쪽 안전영역(상태 아이콘 자리)은 피한다
+    const bookRight = spread ? shiftX + pageW * 2 : W;
+    const headR = Math.max(Math.round(W - bookRight + padX), Math.round(si.right) + (spread ? 8 : 14), 14);
     return {
-      W, H, spread, compact, duo, sym, pageW, pageH: H, bookW: spread ? pageW * 2 : pageW,
-      padX, padTop, padBottom, si, shiftX, eff,
-      textW: pageW - padX * 2, textH: H - padTop - padBottom,
+      W, H, spread, compact, duo, sym, pageW, pageH, bookW: spread ? pageW * 2 : pageW,
+      padX, padTop, padBottom, si, shiftX, eff, stageTop, txtTop, headR,
+      textW: pageW - padX * 2, textH: pageH - txtTop - padBottom,
     };
   }
 
@@ -178,6 +190,15 @@
   }
   let lastTitleFs = 44;
 
+  // 테마(종이·세피아·야간)와 책상 질감을 body 클래스로 적용하고, 상태 표시줄 색(theme-color)을 책상 색에 맞춘다.
+  const deskOf = () => (DESKS[settings.desk] ? settings.desk : DESK_DEFAULT);
+  function applyDesk() {
+    document.body.className = document.body.className
+      .replace(/\b(theme|desk)-\w+/g, '').replace(/\s+/g, ' ').trim() + ' theme-' + settings.theme + ' desk-' + deskOf();
+    const desk = getComputedStyle(document.body).getPropertyValue('--desk').trim();
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta && desk) meta.setAttribute('content', desk);
+  }
   function applyLook(g) {
     const root = document.documentElement.style;
     root.setProperty('--fs', settings.fontSize + 'px');
@@ -186,19 +207,19 @@
     root.setProperty('--sans', fstack);   // 상단 메뉴·굵은 글씨·창도 같은 글씨체
     root.setProperty('--padx', g.padX + 'px');
     root.setProperty('--padtop', g.padTop + 'px');
+    root.setProperty('--txttop', g.txtTop + 'px');   // 쪽 안에서 본문이 시작하는 높이 (펼침: 책 위쪽 가장자리 기준)
+    root.setProperty('--headh', (g.spread ? g.stageTop : g.padTop) + 'px');   // 머리줄 영역의 높이 (책·본문이 시작하기 전까지)
+    root.setProperty('--headr', g.headR + 'px');
     root.setProperty('--padbottom', g.padBottom + 'px');
     // 상단: 접힘 = 책 이름 위, 메뉴 아래(본문 바로 위) / 펼침 = 한 줄(책 이름 왼쪽, 메뉴 오른쪽)
     const hb = headBox(g.spread, g.compact), titleFs = hb.titleFs, rowH = hb.rowH;
     lastTitleFs = titleFs;
     root.setProperty('--title-fs', titleFs + 'px');
-    root.setProperty('--head-top', Math.max(g.si.top + HEAD_TOP_GAP, g.padTop - 12 - rowH) + 'px');
-    document.body.className = document.body.className
-      .replace(/\btheme-\w+/g, '').trim() + ' theme-' + settings.theme;
-    const bg = getComputedStyle(document.body).getPropertyValue('--bg').trim();
-    const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta && bg) meta.setAttribute('content', bg);
+    root.setProperty('--head-top', Math.max(g.si.top + HEAD_TOP_GAP, (g.spread ? g.stageTop - HEAD_STAGE_GAP : g.padTop - 12) - rowH) + 'px');
+    applyDesk();
     stage.style.width = g.bookW + 'px';
-    stage.style.height = g.H + 'px';
+    stage.style.height = g.pageH + 'px';
+    stage.style.top = g.stageTop ? g.stageTop + 'px' : '';
     stage.dataset.o = g.H >= g.W ? 'portrait' : 'landscape';   // CSS가 돌리는 순간 낡은 무대를 바로 숨기는 데 쓴다
     stage.style.marginLeft = g.shiftX ? g.shiftX + 'px' : '';   // 펼친 화면 가운데 맞춤
     root.setProperty('--shiftx', g.shiftX + 'px');
@@ -1444,7 +1465,7 @@
     if (W !== g.W || H !== g.H) out.push('창크기 ' + W + '×' + H + '≠' + g.W + '×' + g.H);
     else if (geoKey(geometry()) !== lastGeo) out.push('안전영역 바뀜');   // 안전영역(env) 값은 바뀌어도 알려 주는 이벤트가 없다
     const st = stage.getBoundingClientRect();
-    if (!near(st.top, 0) || !near(st.height, g.H) || !near(st.width, g.bookW) || !near(st.left, g.shiftX)) {
+    if (!near(st.top, g.stageTop) || !near(st.height, g.pageH) || !near(st.width, g.bookW) || !near(st.left, g.shiftX)) {
       out.push('무대 ' + Math.round(st.left) + ',' + Math.round(st.top) + ' ' + Math.round(st.width) + '×' + Math.round(st.height));
     }
     if (scroller) {
@@ -1460,7 +1481,8 @@
     const hr = document.querySelector('.head-row');
     if (hr) {
       const r = hr.getBoundingClientRect();
-      if (r.bottom > g.padTop + 0.5) out.push('머리줄이 본문 위로 ' + Math.round(r.bottom - g.padTop) + 'px 겹침');
+      const lim = g.spread ? g.stageTop : g.padTop;
+      if (r.bottom > lim + 0.5) out.push('머리줄이 본문 위로 ' + Math.round(r.bottom - lim) + 'px 겹침');
     }
     return out.join(' · ');
   }
@@ -1496,7 +1518,8 @@
     if (vv && !typing && (Math.abs(vv.offsetTop) > 1 || Math.abs(vv.offsetLeft) > 1)) out.push('보이는영역 ' + Math.round(vv.offsetLeft) + ',' + Math.round(vv.offsetTop));
     if (vv && !typing && Math.abs(vv.scale - 1) > 0.02) out.push('배율 ' + vv.scale.toFixed(2));   // 회전 뒤 화면이 확대·축소된 채 남는 경우
     const st = stage.getBoundingClientRect();
-    if (Math.abs(st.top) > 1) out.push('무대 위 ' + Math.round(st.top));
+    const expTop = pg && pg.g ? pg.g.stageTop : 0;   // 펼친 화면의 책은 머리줄 아래에서 시작한다
+    if (Math.abs(st.top - expTop) > 1) out.push('무대 위 ' + Math.round(st.top) + (expTop ? '(기준 ' + expTop + ')' : ''));
     if (stage.scrollTop || stage.scrollLeft) out.push('무대스크롤');
     if (!scroller) {
       let n = 0;
@@ -1520,7 +1543,7 @@
     stage.scrollTop = 0; stage.scrollLeft = 0; stage.style.transform = '';
     if (!scroller) document.querySelectorAll('#stage .page .txt, #stage .page, #book').forEach((e) => { e.scrollTop = 0; e.scrollLeft = 0; });
     if (sel && bar.hidden) updateBar();
-    if (Math.abs(stage.getBoundingClientRect().top) > 1 && Date.now() - healRebuilt > 8000) {   // 그래도 어긋나 있으면 다시 만든다
+    if (Math.abs(stage.getBoundingClientRect().top - (pg && pg.g ? pg.g.stageTop : 0)) > 1 && Date.now() - healRebuilt > 8000) {   // 그래도 어긋나 있으면 다시 만든다
       healRebuilt = Date.now();
       rebuild(pos);
     }
@@ -1901,6 +1924,7 @@
       '<button data-f="-1" aria-label="작게">A−</button><b>' + settings.fontSize + '</b>' +
       '<button data-f="1" aria-label="크게">A+</button></div></div>' +
       '<div class="row"><span>테마</span>' + seg(THEMES, settings.theme, 'theme') + '</div>' +
+      '<div class="row"><span>책상 질감</span>' + seg(DESKS, deskOf(), 'desk') + '</div>' +
       '<div class="row col"><span>글씨체</span><div class="fontgrid">' + Object.keys(FONTS).map((k) =>
         '<button class="fbtn' + (k === settings.font ? ' on' : '') + '" data-k="font" data-v="' + k +
         '" style="font-family:' + FONTS[k].stack.replace(/"/g, "'") + '">' + FONTS[k].label + '<small>가나다 창조 Aa</small></button>').join('') +
@@ -1914,7 +1938,16 @@
       if (next !== settings.fontSize) changeSettings({ fontSize: next });
     }));
     sheetBody.querySelectorAll('[data-k]').forEach((b) =>
-      b.addEventListener('click', () => changeSettings({ [b.dataset.k]: b.dataset.v })));
+      b.addEventListener('click', () => {
+        if (b.dataset.k === 'desk') {   // 책 쪽 나누기와 무관: 다시 만들지 않고 바로 적용
+          settings = Object.assign({}, settings, { desk: b.dataset.v });
+          store.set('bf.settings', settings);
+          applyDesk();
+          const keep = sheetBody.scrollTop; showSettings(); sheetBody.scrollTop = keep;
+          return;
+        }
+        changeSettings({ [b.dataset.k]: b.dataset.v });
+      }));
   }
 
   // ---------- 고급설정: 여백 · 위치 · 화면 정보 ----------
@@ -1976,7 +2009,7 @@
     return JSON.stringify({
       app: 'bibleflip', ver: 1, savedAt: new Date().toISOString(),
       pos, tool, anns, notes: notesDB.items,
-      settings: { fontSize: settings.fontSize, theme: settings.theme, font: settings.font, layout: settings.layout, std: !!settings.std },
+      settings: { fontSize: settings.fontSize, theme: settings.theme, desk: deskOf(), font: settings.font, layout: settings.layout, std: !!settings.std },
     });
   }
   // 붙여 넣은 글을 검사해서 쓸 수 있는 것만 골라 적용한다. 잘못된 내용이면 오류를 던진다.
@@ -2021,6 +2054,7 @@
     const s = d.settings || {}, patch = {};
     if (Number.isFinite(s.fontSize) && s.fontSize >= FONT_MIN && s.fontSize <= FONT_MAX) patch.fontSize = Math.round(s.fontSize);
     if (THEMES[s.theme]) patch.theme = s.theme;
+    if (DESKS[s.desk]) patch.desk = s.desk;
     if (FONTS[s.font]) patch.font = s.font;
     if (LAYOUTS[s.layout]) patch.layout = s.layout;
     if (typeof s.std === 'boolean') patch.std = s.std;
