@@ -24,6 +24,7 @@
   const TOP_MIN_SPREAD = 48, TOP_MIN_SINGLE = 96, TOP_MAX = 280;
   const SIDE_PAD = 8;   // 본문 좌우 여백(px). 더 줄이려면 숫자를 낮추세요
   const FONT_MIN = 14, FONT_MAX = 30;
+  const APP_VER = 'v35';   // sw.js의 CACHE 숫자와 함께 올린다. 고급설정 → 화면 정보에 표시돼, 새 버전이 적용됐는지 확인할 수 있다.
   const THEMES = { paper: '종이', sepia: '세피아', night: '야간' };
   const DESKS = { plain: '단색', linen: '린넨', wood: '나무결', leather: '가죽' };   // 책상(상단 배경) 질감
   const DESK_DEFAULT = 'linen';
@@ -1986,7 +1987,8 @@
       '<br>값을 바꾸면 본문이 잠시 뒤에 새로 정렬됩니다. 읽던 위치는 그대로 유지됩니다.</p>' +
       '<div class="adv-head">화면 정보</div>' +
       '<p class="note tight">현재 화면 ' + g.W + ' × ' + g.H + ' px (창 ' + window.innerWidth + ' × ' + window.innerHeight + ') · ' + (g.spread ? '펼침(두 쪽)' : '한 쪽') +
-      ' (자동 기준: 폭 ' + AUTO_SPREAD_MIN_WIDTH + 'px 이상, 또는 가로 화면이면 ' + AUTO_SPREAD_MIN_LANDSCAPE + 'px 이상)<br>안전영역 위 ' + g.si.top + ' · 아래 ' + g.si.bottom + ' · 좌 ' + g.si.left + ' · 우 ' + g.si.right + '</p>' +
+      ' (자동 기준: 폭 ' + AUTO_SPREAD_MIN_WIDTH + 'px 이상, 또는 가로 화면이면 ' + AUTO_SPREAD_MIN_LANDSCAPE + 'px 이상)<br>안전영역 위 ' + g.si.top + ' · 아래 ' + g.si.bottom + ' · 좌 ' + g.si.left + ' · 우 ' + g.si.right +
+      '<br>기기 화면 ' + screen.width + ' × ' + screen.height + ' · 배율 ' + (window.devicePixelRatio || 1) + ' · 앱 버전 ' + APP_VER + '</p>' +
       '<div class="row"><span>화면이 위로 올라가거나 작게 보일 때 <small class="sub">값을 새로 읽고 책을 다시 만듭니다</small></span><button class="seg-btn" id="adv-refit" type="button">다시 맞추기</button></div>' +
       '<div class="row"><span>앱 다시 시작 <small class="sub">읽던 위치는 그대로 · 안 고쳐지면 이걸로</small></span><button class="seg-btn" id="adv-restart" type="button">다시 시작</button></div>' +
       '<p class="note diag"><b>화면 진단</b><br>' + diagText() + '</p>';
