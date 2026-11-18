@@ -193,8 +193,11 @@
   // 테마(종이·세피아·야간)와 책상 질감을 body 클래스로 적용하고, 상태 표시줄 색(theme-color)을 책상 색에 맞춘다.
   const deskOf = () => (DESKS[settings.desk] ? settings.desk : DESK_DEFAULT);
   function applyDesk() {
-    document.body.className = document.body.className
-      .replace(/\b(theme|desk)-\w+/g, '').replace(/\s+/g, ' ').trim() + ' theme-' + settings.theme + ' desk-' + deskOf();
+    const look = ' theme-' + settings.theme + ' desk-' + deskOf();
+    const strip = (el) => el.className.replace(/\b(theme|desk)-\w+/g, '').replace(/\s+/g, ' ').trim();
+    document.body.className = strip(document.body) + look;
+    // html(캔버스)에도 같은 클래스를 달아, 책 바깥 여백(듀오 오른쪽 안전영역 등)이 흰색 대신 책상 색·질감으로 칠해지게 한다
+    document.documentElement.className = (strip(document.documentElement) + look).trim();
     const desk = getComputedStyle(document.body).getPropertyValue('--desk').trim();
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta && desk) meta.setAttribute('content', desk);
