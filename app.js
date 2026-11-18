@@ -733,7 +733,7 @@
       const bid = bible.books[target.book].id;
       const sd = await loadStd(bid);
       if (gen !== generation) return;
-      if (!sd && !stdToasted[bid]) { stdToasted[bid] = true; setTimeout(() => showToastLine('이 책은 쉬운 말 풀이가 아직 준비되지 않았습니다'), 400); }
+      if (!sd && !stdToasted[bid]) { stdToasted[bid] = true; setTimeout(() => showToastLine('이 책은 AI 표준어 번역이 아직 준비되지 않았습니다'), 400); }
     }
     const g = geometry();
     lastGeo = [g.W, g.H, g.si.top, g.si.bottom, g.si.left, g.si.right].join('x');
@@ -1846,50 +1846,46 @@
     settingsTimer = setTimeout(() => rebuild(pos), 250);
   }
 
-  // ---------- 쉬운 말 보기: 본문 아래에 표준어 풀이를 함께 보여 준다 ----------
-  const easyBtn = $('#btn-easy');
-  const syncEasyBtn = () => { easyBtn.classList.toggle('on', !!settings.std); easyBtn.setAttribute('aria-pressed', settings.std ? 'true' : 'false'); };
-  syncEasyBtn();
-  // [1,2,3,5,6] → '1–3, 5–6'
-  function rangeText(list) {
-    const a = list.slice().sort((x, y) => x - y), out = [];
-    for (let i = 0; i < a.length;) {
-      let j = i;
-      while (j + 1 < a.length && a[j + 1] === a[j] + 1) j++;
-      out.push(j > i ? a[i] + '–' + a[j] : String(a[i]));
-      i = j + 1;
-    }
-    return out.join(', ');
-  }
-  function showEasy() {
-    sheetTitle.textContent = '쉬운 말 보기';
+  // ---------- 번역 선택: 본문 아래에 다른 번역·풀이를 함께 보여 준다 ----------
+  // 지금은 'AI 표준어 번역'(settings.std)만 고를 수 있다. 나머지 번역은 자리만 두었고 체크할 수 없다(추후 업데이트 예정).
+  const TRANSLATIONS = [
+    { key: 'std', name: 'AI 표준어 번역', sub: '개역한글 아래에 표준어 풀이를 작은 글씨로 보여 줍니다', ready: true },
+    { key: 'krv2', name: '개역개정', ready: false },
+    { key: 'hdr', name: '현대인의성경', ready: false },
+    { key: 'easy', name: '쉬운성경', ready: false },
+  ];
+  const trBtn = $('#btn-easy');
+  const syncTrBtn = () => { trBtn.classList.toggle('on', !!settings.std); trBtn.setAttribute('aria-pressed', settings.std ? 'true' : 'false'); };
+  syncTrBtn();
+  // 'AI 표준어 번역'을 골랐을 때 그 아래에 나오는 보기와 안내문
+  const STD_INFO =
+    '<div class="easy-eg typo"><div class="eg-h">보기 (창세기 1장 1절)</div>' +
+    '<p><sup class="vn">1</sup>태초에 하나님이 천지를 창조하시니라</p>' +
+    '<p class="std">태초에 하나님이 하늘과 땅을 창조하셨다.</p></div>' +
+    '<p class="note">※ 이 풀이는 개역한글의 뜻을 현대 표준어로 옮겨 쓴 <b>참고용 글</b>입니다. 공식 번역본이 아니며, 본문과 조금 다르게 읽힐 수 있으니 정확한 뜻은 개역한글 본문과 함께 확인해 주세요. 설교나 가르침에 쓰기 전에는 목회자·전문가의 검토를 권합니다.</p>';
+  function showTranslations() {
+    sheetTitle.textContent = '번역 선택';
     setSheetAct(null);
     backBtn.hidden = true;
     sheetBack = null;
+    const pending = TRANSLATIONS.filter((t) => !t.ready).map((t) => esc(t.name));
     sheetBody.innerHTML =
-      '<label class="row chk"><span>본문 아래에 쉬운 말 함께 보기<small class="sub">개역한글 아래에 표준어 풀이를 작은 글씨로 보여 줍니다</small></span>' +
-      '<input type="checkbox" id="opt-easy"' + (settings.std ? ' checked' : '') + '><i class="sw" aria-hidden="true"></i></label>' +
-      '<div class="easy-eg typo"><div class="eg-h">보기 (창세기 1장 1절)</div>' +
-      '<p><sup class="vn">1</sup>태초에 하나님이 천지를 창조하시니라</p>' +
-      '<p class="std">태초에 하나님이 하늘과 땅을 창조하셨다.</p></div>' +
-      '<p class="note">※ 이 풀이는 개역한글의 뜻을 현대 표준어로 옮겨 쓴 <b>참고용 글</b>입니다. 공식 번역본이 아니며, 본문과 조금 다르게 읽힐 수 있으니 정확한 뜻은 개역한글 본문과 함께 확인해 주세요. 설교나 가르침에 쓰기 전에는 목회자·전문가의 검토를 권합니다.</p>' +
-      '<div class="adv-head">준비된 곳</div><p class="note tight" id="easy-ready">불러오는 중…</p>';
-    $('#opt-easy').addEventListener('change', (e) => {
+      TRANSLATIONS.map((t) => {
+        const on = t.ready && !!settings[t.key];
+        return '<div class="tr-item"><label class="row chk tr' + (t.ready ? '' : ' off') + '">' +
+          '<input type="checkbox" id="tr-' + t.key + '"' + (on ? ' checked' : '') + (t.ready ? '' : ' disabled') + '><i class="cb" aria-hidden="true"></i>' +
+          '<span>' + esc(t.name) + (t.sub ? '<small class="sub">' + esc(t.sub) + '</small>' : '') + '</span></label>' +
+          (t.key === 'std' ? '<div class="tr-info" id="tr-info-std"' + (on ? '' : ' hidden') + '>' + STD_INFO + '</div>' : '') +
+          '</div>';
+      }).join('') +
+      '<p class="note">※ 참고: ' + pending.join(', ') + '은 추후 업데이트될 예정입니다.</p>';
+    $('#tr-std').addEventListener('change', (e) => {
       settings = Object.assign({}, settings, { std: !!e.target.checked });
       store.set('bf.settings', settings);
-      syncEasyBtn();
-      closeSheet();
-      rebuild(pos);   // 읽던 위치는 그대로 두고 다시 만든다
-    });
-    loadStdIndex().then((idx) => {
-      const box = document.getElementById('easy-ready');
-      if (!box) return;
-      const lines = [];
-      bible.books.forEach((b) => {
-        const chs = idx.books[b.id];
-        if (Array.isArray(chs) && chs.length) lines.push('<b>' + esc(b.name) + '</b> ' + rangeText(chs) + (b.id === 'psa' ? '편' : '장'));
-      });
-      box.innerHTML = lines.length ? lines.join('<br>') + '<br><span class="sub">앞으로 더 늘려 갑니다. 풀이가 없는 곳은 개역한글만 보입니다.</span>' : '아직 준비된 곳이 없습니다.';
+      syncTrBtn();
+      $('#tr-info-std').hidden = !settings.std;   // 고르면 안내문이 나오고, 끄면 사라진다
+      clearTimeout(settingsTimer);
+      settingsTimer = setTimeout(() => rebuild(pos), 250);   // 창은 그대로 두고 뒤의 본문만 다시 만든다 (읽던 위치 유지)
     });
   }
 
@@ -2030,7 +2026,7 @@
     if (typeof s.std === 'boolean') patch.std = s.std;
     settings = Object.assign({}, settings, patch);
     store.set('bf.settings', settings);
-    syncEasyBtn();
+    syncTrBtn();
     return { verses, marks, notes: notes ? notes.length : null };
   }
   // 백업에서 읽은 노트를 검사해 쓸 수 있는 것만 남긴다
@@ -2828,7 +2824,7 @@
     btn.addEventListener('click', run);
   }
   onMenu($('#btn-pick'), () => { showBooks(pos.book >= 39 ? 'nt' : 'ot'); openSheet(false); });
-  onMenu($('#btn-easy'), () => { showEasy(); openSheet(false); });
+  onMenu($('#btn-easy'), () => { showTranslations(); openSheet(false); });
   onMenu($('#btn-settings'), () => { showSettings(); openSheet(false); });
   onMenu($('#btn-hl'), () => { showHighlights(); openSheet(false); });
   onMenu($('#btn-notes'), () => { showNotes(); openSheet(true); });
