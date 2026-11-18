@@ -24,7 +24,7 @@
   const TOP_MIN_SPREAD = 48, TOP_MIN_SINGLE = 96, TOP_MAX = 280;
   const SIDE_PAD = 8;   // 본문 좌우 여백(px). 더 줄이려면 숫자를 낮추세요
   const FONT_MIN = 14, FONT_MAX = 30;
-  const APP_VER = 'v36';   // sw.js의 CACHE 숫자와 함께 올린다. 고급설정 → 화면 정보에 표시돼, 새 버전이 적용됐는지 확인할 수 있다.
+  const APP_VER = 'v37';   // sw.js의 CACHE 숫자와 함께 올린다. 고급설정 → 화면 정보에 표시돼, 새 버전이 적용됐는지 확인할 수 있다.
   const THEMES = { paper: '종이', sepia: '세피아', night: '야간' };
   const DESKS = { plain: '단색', linen: '린넨', wood: '나무결', leather: '가죽' };   // 책상(상단 배경) 질감
   const DESK_DEFAULT = 'linen';
@@ -199,10 +199,34 @@
     document.body.className = strip(document.body) + look;
     // html(캔버스)에도 같은 클래스를 달아, 책 바깥 여백(듀오 오른쪽 안전영역 등)이 흰색 대신 책상 색·질감으로 칠해지게 한다
     document.documentElement.className = (strip(document.documentElement) + look).trim();
-    const desk = getComputedStyle(document.body).getPropertyValue('--desk').trim();
-    const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta && desk) meta.setAttribute('content', desk);
+    refreshSystemColor();
   }
+  // iOS가 오른쪽(듀오 시스템 띠)·위쪽 색을 읽는 곳(theme-color, 가장자리에 닿은 고정 요소)은 테마를 바꿔도 곧바로 다시 읽지 않는 경우가 있다.
+  // (v36 실기기: 야간으로 바꿨는데 띠에 세피아색이 그대로 남음) → 색이 바뀌면 meta와 가장자리 띠를 새 노드로 갈아 끼우고, 잠시 뒤 두 번 더 한다.
+  // 앱을 켤 때·다시 열 때·화면 크기가 바뀔 때(접기/펴기)도 같은 방식으로 한 번씩 다시 읽게 한다.
+  let sysColorKey = '', sysColorTimers = [];
+  function refreshSystemColor(force) {
+    const desk = getComputedStyle(document.body).getPropertyValue('--desk').trim();
+    if (!desk) return;
+    const key = settings.theme + '|' + deskOf() + '|' + desk;
+    if (!force && key === sysColorKey) return;
+    sysColorKey = key;
+    const swap = () => {
+      const meta = document.createElement('meta');
+      meta.name = 'theme-color'; meta.content = desk;
+      const old = document.querySelector('meta[name="theme-color"]');
+      if (old) old.replaceWith(meta); else document.head.appendChild(meta);
+      ['desk-edge-l', 'desk-edge-r'].forEach((id) => { const el = document.getElementById(id); if (el) el.replaceWith(el.cloneNode(false)); });
+    };
+    swap();
+    sysColorTimers.forEach(clearTimeout);
+    sysColorTimers = [150, 700].map((ms) => setTimeout(swap, ms));
+  }
+  let sysColorDebounce = 0;
+  const nudgeSystemColor = () => { clearTimeout(sysColorDebounce); sysColorDebounce = setTimeout(() => refreshSystemColor(true), 200); };
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) nudgeSystemColor(); });
+  window.addEventListener('pageshow', nudgeSystemColor);
+  window.addEventListener('resize', nudgeSystemColor);
   function applyLook(g) {
     const root = document.documentElement.style;
     root.setProperty('--fs', settings.fontSize + 'px');
