@@ -62,11 +62,12 @@ html, body { background-color: var(--desk); background-image: radial-gradient(13
 :root.theme-night.desk-wood, body.theme-night.desk-wood { background-image: radial-gradient(130% 62% at 50% 0%, var(--glow), transparent 72%), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.005 .11' numOctaves='4' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.95 0 0 0 0 0.93 0 0 0 0 0.9 0.42 0 0 0 -0.13'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url%28%23n%29'/%3E%3C/svg%3E"); }
 :root.desk-leather, body.desk-leather { background-image: radial-gradient(130% 62% at 50% 0%, var(--glow), transparent 72%), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.55' numOctaves='3' seed='11' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.3 0 0 0 0 0.19 0 0 0 0 0.07 1.5 0 0 0 -0.52'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url%28%23n%29'/%3E%3C/svg%3E"); }
 :root.theme-night.desk-leather, body.theme-night.desk-leather { background-image: radial-gradient(130% 62% at 50% 0%, var(--glow), transparent 72%), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.55' numOctaves='3' seed='11' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.95 0 0 0 0 0.93 0 0 0 0 0.9 0.55 0 0 0 -0.2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url%28%23n%29'/%3E%3C/svg%3E"); }
-/* 화면 맨 왼쪽·오른쪽 끝의 가는 책상색 띠. 아이폰은 화면 가장자리에 닿은 고정 요소의 색을 따서 그 바깥 여백(듀오 오른쪽 상태 영역)을 칠하는데,
-   책 카드가 오른쪽 끝에 닿아 있으면 카드의 종이색이 그 여백에 번진다. 가장 위에 책상색 띠를 두어 그 색이 따지게 한다. (눌러도 통과) */
-.desk-edge { position: fixed; top: 0; bottom: 0; width: 4px; z-index: 5; pointer-events: none; background: inherit; }
-#desk-edge-l { left: 0; }
-#desk-edge-r { right: 0; }
+/* 화면 가장자리의 책상색 띠. 아이폰(iOS 26~)은 화면 가장자리에 닿은 position:fixed 요소를 보고 바깥 시스템 영역(듀오 오른쪽 상태창 자리)의 색을 정한다.
+   가장자리 한가운데에서 4px 안쪽을 눌러 맞는 고정 요소이고 그 가장자리를 90% 이상 덮어야 하며, 요소가 10px보다 얇으면 가장자리 4~6px 안쪽의 화면 픽셀 색을 따온다.
+   띠가 4px일 때는 그 자리가 책 카드여서 종이색이 번졌다(v35). 본문 글자는 가장자리에서 8px(SIDE_PAD) 안쪽에서 시작하므로, 글자를 가리지 않으면서 4~6px 구간을 덮는 7px 띠를 둔다. 눌러도 통과한다. */
+.desk-edge { position: fixed; top: 0; bottom: 0; width: 7px; z-index: 8; pointer-events: none; background: inherit; }
+#desk-edge-l { left: 0; }   /* 설교노트 탭(z 9)보다 아래 */
+#desk-edge-r { right: 0; z-index: 11; }   /* 머리줄(z 10) 위: 가장자리에서 가장 먼저 걸리는 고정 요소가 되게 */
 /* 책 면: 둥근 윗모서리 + 책상 위로 살짝 뜬 그림자. (펼침: 책 영역, 접힘: 위아래로 읽는 장 영역) */
 #stage:not(.scroll), #book.scroll {
   background: var(--bg); border-radius: 16px 16px 0 0;
